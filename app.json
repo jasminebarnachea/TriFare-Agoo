@@ -1,0 +1,43 @@
+{
+  "expo": {
+    "name": "Tri Fare Agoo",
+    "slug": "tri-fare-agoo",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "scheme": "trifareagoo",
+    "splash": {
+      "backgroundColor": "#F4F7F4"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.trifare.agoo",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Tri Fare Agoo uses your location to show nearby terminals and calculate your trip."
+      }
+    },
+    "android": {
+      "package": "com.trifare.agoo",
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION"
+      ]
+    },
+    "plugins": [
+      "expo-font",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Allow Tri Fare Agoo to use your location for fares and nearby terminals."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Tri Fare Agoo to attach a fare-board or receipt photo.",
+          "cameraPermission": "Allow Tri Fare Agoo to take a fare-board or receipt photo."
+        }
+      ]
+    ]
+  }
+}
