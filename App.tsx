@@ -583,9 +583,9 @@ function RouteScreen({ goBack, start, initialDestination }: { goBack: () => void
       <Pressable accessibilityLabel={pinMode ? 'Cancel pin location' : 'Pin location'} style={[s.pinLocationButton, pinMode && s.pinLocationButtonActive]} onPress={() => setPinMode(value => !value)}>
         <MapPinned size={21} color={pinMode ? C.white : C.ink} />
       </Pressable>
-      <Animated.View {...routePan.panHandlers} style={[s.panoRouteCard, { transform: [{ translateY: routeSheetY }] }]}>
-        <Pressable hitSlop={8} style={s.dragHandleArea} onPress={() => settleRouteSheet(routeSheetOffset.current === 0)}><View style={s.handle} /></Pressable>
-        <ScrollView showsVerticalScrollIndicator={false} nestedScrollEnabled contentContainerStyle={s.routeCardContent}>
+      <Animated.View style={[s.panoRouteCard, { transform: [{ translateY: routeSheetY }] }]}>
+        <Pressable {...routePan.panHandlers} hitSlop={8} style={s.dragHandleArea} onPress={() => settleRouteSheet(routeSheetOffset.current === 0)}><View style={s.handle} /></Pressable>
+        <ScrollView style={s.routeCardScroll} showsVerticalScrollIndicator={false} nestedScrollEnabled contentContainerStyle={s.routeCardContent}>
         <View style={s.placeHeader}><View style={s.grow}><Text style={s.placeCategory}>TRICYCLE ROUTE</Text><Text style={s.placeTitle}>{destinationName}</Text></View>
           {loading ? <ActivityIndicator color="white" /> : <View style={s.darkCircleSmall}><TricycleIcon color="white" size={23} /></View>}
         </View>
@@ -695,6 +695,18 @@ function RideScreen({ trip, complete }: { trip: TripPlan; complete: (trip: Saved
 function FareCalculator({ open }: { open: (s: Screen) => void }) {
   const [distance, setDistance] = useState(6);
   const [special, setSpecial] = useState(false);
+  const [sliderWidth, setSliderWidth] = useState(0);
+  const setDistanceFromSlider = (x: number) => {
+    if (!sliderWidth) return;
+    const next = Math.max(.5, Math.min(12, (x / sliderWidth) * 12));
+    setDistance(Math.round(next * 2) / 2);
+  };
+  const distanceSliderPan = useMemo(() => PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    onMoveShouldSetPanResponder: () => true,
+    onPanResponderGrant: event => setDistanceFromSlider(event.nativeEvent.locationX),
+    onPanResponderMove: event => setDistanceFromSlider(event.nativeEvent.locationX),
+  }), [sliderWidth]);
   const regular = 20 + Math.max(0, distance - 4) * 2;
   const discount = special ? regular * .2 : 0;
   const total = regular - discount;
@@ -704,13 +716,26 @@ function FareCalculator({ open }: { open: (s: Screen) => void }) {
       <View style={s.transportBadge}><TricycleIcon size={18} /><Text style={s.badgeText}>Tricycle · Agoo, La Union</Text></View>
       <Card>
         <View style={s.rowBetween}><Text style={s.eyebrow}>DISTANCE (KM)</Text><Text style={s.bigValue}>{distance.toFixed(1)}</Text></View>
-        <View style={s.sliderTrack}>
+        <View
+          {...distanceSliderPan.panHandlers}
+          accessibilityRole="adjustable"
+          accessibilityLabel="Trip distance"
+          accessibilityValue={{ min: .5, max: 12, now: distance, text: `${distance.toFixed(1)} kilometers` }}
+          onAccessibilityAction={({ nativeEvent }) => {
+            if (nativeEvent.actionName === 'increment') setDistance(value => Math.min(12, value + .5));
+            if (nativeEvent.actionName === 'decrement') setDistance(value => Math.max(.5, value - .5));
+          }}
+          accessibilityActions={[{ name: 'increment' }, { name: 'decrement' }]}
+          onLayout={({ nativeEvent }) => setSliderWidth(nativeEvent.layout.width)}
+          style={s.sliderTrack}
+        >
+          <View style={s.sliderRail} />
           <View style={[s.sliderFill, { width: `${(distance / 12) * 100}%` }]} />
           <View style={[s.sliderThumb, { left: `${Math.min(95, (distance / 12) * 100)}%` }]} />
         </View>
         <View style={s.stepper}>
           <Pressable onPress={() => setDistance(Math.max(.5, distance - .5))} style={s.step}><Text style={s.stepText}>−</Text></Pressable>
-          <Text style={s.caption}>Tap to adjust by 0.5 km</Text>
+          <Text style={s.caption}>Drag the green line to adjust</Text>
           <Pressable onPress={() => setDistance(Math.min(12, distance + .5))} style={s.step}><Text style={s.stepText}>+</Text></Pressable>
         </View>
       </Card>
@@ -927,8 +952,10 @@ const s = StyleSheet.create({
   card: { backgroundColor: C.white, borderRadius: 22, padding: 16, gap: 10, shadowColor: '#183226', shadowOpacity: .07, shadowRadius: 16, shadowOffset: { width: 0, height: 6 } },
   cardTitle: { fontFamily: 'Manrope_700Bold', color: C.ink, fontSize: 14 }, bigValue: { fontFamily: 'Manrope_800ExtraBold', color: C.ink, fontSize: 20 },
   eyebrow: { fontFamily: 'Manrope_800ExtraBold', color: C.muted, fontSize: 10, letterSpacing: .8, marginTop: 7 },
-  sliderTrack: { height: 8, borderRadius: 4, backgroundColor: C.line, marginVertical: 12 }, sliderFill: { height: 8, borderRadius: 4, backgroundColor: C.green },
-  sliderThumb: { position: 'absolute', top: -5, width: 18, height: 18, borderRadius: 9, backgroundColor: C.green, marginLeft: -8 },
+  sliderTrack: { height: 36, justifyContent: 'center', marginVertical: 2 },
+  sliderRail: { position: 'absolute', left: 0, right: 0, height: 8, borderRadius: 4, backgroundColor: C.line },
+  sliderFill: { height: 8, borderRadius: 4, backgroundColor: C.green },
+  sliderThumb: { position: 'absolute', top: 9, width: 18, height: 18, borderRadius: 9, backgroundColor: C.green, marginLeft: -8 },
   stepper: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, step: { width: 36, height: 32, borderRadius: 10, backgroundColor: C.mint, alignItems: 'center', justifyContent: 'center' }, stepText: { fontFamily: 'Manrope_800ExtraBold', fontSize: 20, color: C.green },
   breakdown: { backgroundColor: C.mint, borderRadius: 24, padding: 19, gap: 5, borderWidth: 1, borderStyle: 'dashed', borderColor: '#CDE3D7' },
   line: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6, gap: 10 }, lineLabel: { flex: 1, fontFamily: 'Manrope_400Regular', color: C.muted, fontSize: 13 }, lineValue: { fontFamily: 'Manrope_700Bold', color: C.ink, fontSize: 13 },
@@ -953,7 +980,8 @@ const s = StyleSheet.create({
   pinLocationButtonActive: { backgroundColor: C.blue },
   pinLocationText: { fontFamily: 'Manrope_800ExtraBold', color: C.ink, fontSize: 11 },
   panoRouteCard: { position: 'absolute', left: 10, right: 10, bottom: 10, height: '49%', borderRadius: 28, padding: 14, backgroundColor: 'rgba(18,21,18,.98)', borderWidth: 1, borderColor: 'rgba(255,255,255,.13)' },
-  routeCardContent: { paddingBottom: 8 },
+  routeCardScroll: { flex: 1 },
+  routeCardContent: { paddingBottom: 42 },
   routeNode: { width: 34, height: 34, borderRadius: 17, backgroundColor: C.blue, borderWidth: 3, borderColor: 'white', alignItems: 'center', justifyContent: 'center' },
   pulseWrap: { width: 58, height: 58, alignItems: 'center', justifyContent: 'center' },
   pinPulse: { position: 'absolute', width: 42, height: 42, borderRadius: 21, backgroundColor: '#36A2FF' },
