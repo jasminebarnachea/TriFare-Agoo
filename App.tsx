@@ -720,7 +720,7 @@ function FareCalculator({ open }: { open: (s: Screen) => void }) {
           {...distanceSliderPan.panHandlers}
           accessibilityRole="adjustable"
           accessibilityLabel="Trip distance"
-          accessibilityValue={{ min: .5, max: 12, now: distance, text: `${distance.toFixed(1)} kilometers` }}
+          accessibilityValue={{ min: 1, max: 24, now: Math.round(distance * 2), text: `${distance.toFixed(1)} kilometers` }}
           onAccessibilityAction={({ nativeEvent }) => {
             if (nativeEvent.actionName === 'increment') setDistance(value => Math.min(12, value + .5));
             if (nativeEvent.actionName === 'decrement') setDistance(value => Math.max(.5, value - .5));
