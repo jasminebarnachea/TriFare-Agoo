@@ -3,7 +3,6 @@ import {
   Alert,
   ActivityIndicator,
   Animated,
-  Dimensions,
   FlatList,
   Image,
   KeyboardAvoidingView,
@@ -22,15 +21,19 @@ import {
 import { StatusBar } from 'expo-status-bar';
 import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
-import MapView, { Circle as MapCircle, Marker, Polyline, PROVIDER_GOOGLE, Region } from 'react-native-maps';
+import { LinearGradient } from 'expo-linear-gradient';
+import { BlurView } from 'expo-blur';
+import MapView, { AnimatedRegion, Circle as MapCircle, Marker, Polyline, PROVIDER_GOOGLE, Region } from 'react-native-maps';
 import Svg, { Circle, Path } from 'react-native-svg';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { HugeiconsIcon } from '@hugeicons/react-native';
+import { UserIcon } from '@hugeicons/core-free-icons';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import {
   ArrowLeft, ArrowRight, Calculator, Camera, Check, ChevronRight, Clock3,
-  Compass, Flag, History, Home, Layers3, LocateFixed, MapPin, MapPinned, Menu,
-  MessageSquareWarning, Navigation, Repeat2, Search, Send, ShieldCheck, SlidersHorizontal,
-  Star, Upload, UserRound, X,
+  Eye, EyeOff, Flag, History, Home, Layers3, LocateFixed, MapPin, MapPinned,
+  MessageSquareWarning, Moon, Navigation, Repeat2, Search, Send, ShieldCheck, SlidersHorizontal,
+  Sun, Upload, X,
 } from 'lucide-react-native';
 import {
   Manrope_400Regular, Manrope_500Medium, Manrope_600SemiBold,
@@ -45,7 +48,21 @@ const C = {
   ink: '#17211C', muted: '#718078', line: '#DDE6E0', white: '#FFFFFF',
   red: '#E53F48', blue: '#1E69E8', amber: '#F4AE23',
 };
-type Tab = 'home' | 'fare' | 'history' | 'more';
+const DARK_MAP_STYLE = [
+  { elementType: 'geometry', stylers: [{ color: '#17201B' }] },
+  { elementType: 'labels.text.fill', stylers: [{ color: '#9EAAA2' }] },
+  { elementType: 'labels.text.stroke', stylers: [{ color: '#17201B' }] },
+  { featureType: 'administrative', elementType: 'geometry.stroke', stylers: [{ color: '#425047' }] },
+  { featureType: 'landscape', elementType: 'geometry', stylers: [{ color: '#19231D' }] },
+  { featureType: 'poi', elementType: 'geometry', stylers: [{ color: '#203027' }] },
+  { featureType: 'poi.park', elementType: 'geometry', stylers: [{ color: '#173727' }] },
+  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#344139' }] },
+  { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#111814' }] },
+  { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#46564C' }] },
+  { featureType: 'transit', elementType: 'geometry', stylers: [{ color: '#28342D' }] },
+  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0B2933' }] },
+] as any[];
+type Tab = 'home' | 'fare' | 'history' | 'profile';
 type Screen = Tab | 'terminals' | 'matrix' | 'report' | 'route' | 'ride';
 const AGOO: Region = { latitude: 16.3221, longitude: 120.3678, latitudeDelta: 0.025, longitudeDelta: 0.018 };
 const routeLine = [
@@ -75,6 +92,7 @@ const EXPLORE_PLACES = TOURIST_SPOTS.filter(spot => VERIFIED_PLACE_PHOTOS[spot.n
 const HOME_MAP_SPOTS = TOURIST_SPOTS.filter(spot => !['Agoo Eco-Fun World', 'Agoo–Damortis Coast'].includes(spot.name));
 type UserProfile = {
   name: string;
+  email: string;
   role: 'Agoo resident' | 'Tourist';
   photoUri: string;
   password: string;
@@ -95,11 +113,59 @@ type SavedTrip = {
   completedAt: string;
   distanceKm: number;
   fare: number;
+  feedbackStatus?: 'pending' | 'no_problem' | 'reported';
 };
 const HISTORY_KEY = 'tri-fare-agoo:trip-history';
 const ACTIVE_TRIP_KEY = 'tri-fare-agoo:active-trip';
 const PROFILE_KEY = 'tri-fare-agoo:user-profile';
 const SESSION_KEY = 'tri-fare-agoo:signed-in';
+const THEME_KEY = 'tri-fare-agoo:theme';
+const PENDING_USERS_KEY = 'tri-fare-agoo:pending-admin-users';
+const PENDING_REPORTS_KEY = 'tri-fare-agoo:pending-admin-reports';
+const ADMIN_API_URL = (process.env.EXPO_PUBLIC_ADMIN_API_URL || 'http://localhost:3000').replace(/\/$/, '');
+type ThemeMode = 'light' | 'dark';
+let darkModeActive = false;
+type PendingAdminRecord = { clientId: string; fields: Record<string, string>; photoUri?: string | null };
+
+async function sendAdminRecord(endpoint: '/api/users' | '/api/reports', record: PendingAdminRecord) {
+  const form = new FormData();
+  form.append('clientId', record.clientId);
+  Object.entries(record.fields).forEach(([key, value]) => form.append(key, value));
+  if (record.photoUri) {
+    const extension = record.photoUri.split('.').pop()?.toLowerCase() || 'jpg';
+    form.append('photo', { uri: record.photoUri, name: `${endpoint.includes('users') ? 'profile' : 'report'}-${record.clientId}.${extension}`, type: extension === 'png' ? 'image/png' : 'image/jpeg' } as any);
+  }
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 7000);
+  try {
+    const response = await fetch(`${ADMIN_API_URL}${endpoint}`, { method: 'POST', body: form, signal: controller.signal });
+    if (!response.ok) throw new Error(`Admin server returned ${response.status}`);
+  } finally { clearTimeout(timeout); }
+}
+
+async function queueAdminRecord(storageKey: string, record: PendingAdminRecord) {
+  const saved = await AsyncStorage.getItem(storageKey);
+  const queue = saved ? JSON.parse(saved) as PendingAdminRecord[] : [];
+  if (!queue.some(item => item.clientId === record.clientId)) queue.push(record);
+  await AsyncStorage.setItem(storageKey, JSON.stringify(queue));
+}
+
+async function syncAdminQueue(storageKey: string, endpoint: '/api/users' | '/api/reports') {
+  const saved = await AsyncStorage.getItem(storageKey);
+  if (!saved) return;
+  const queue = JSON.parse(saved) as PendingAdminRecord[];
+  const remaining: PendingAdminRecord[] = [];
+  for (const record of queue) {
+    try { await sendAdminRecord(endpoint, record); }
+    catch { remaining.push(record); }
+  }
+  if (remaining.length) await AsyncStorage.setItem(storageKey, JSON.stringify(remaining));
+  else await AsyncStorage.removeItem(storageKey);
+}
+
+function syncPendingAdminData() {
+  return Promise.all([syncAdminQueue(PENDING_USERS_KEY, '/api/users'), syncAdminQueue(PENDING_REPORTS_KEY, '/api/reports')]);
+}
 
 function peso(v: number) { return `₱${v.toFixed(v % 1 ? 2 : 0)}`; }
 function distanceMetres(a: RoutePoint, b: RoutePoint) {
@@ -121,11 +187,53 @@ function routeRemainingMetres(route: RoutePoint[], current: RoutePoint) {
   for (let index = nearest; index < route.length - 1; index++) remaining += distanceMetres(route[index], route[index + 1]);
   return remaining;
 }
+function nearestRouteIndex(route: RoutePoint[], current: RoutePoint) {
+  let nearest = 0;
+  let nearestDistance = Number.POSITIVE_INFINITY;
+  route.forEach((point, index) => {
+    const distance = distanceMetres(current, point);
+    if (distance < nearestDistance) { nearestDistance = distance; nearest = index; }
+  });
+  return nearest;
+}
+function routeHeading(from?: RoutePoint, to?: RoutePoint) {
+  if (!from || !to) return 0;
+  const radians = (value: number) => value * Math.PI / 180;
+  const degrees = (value: number) => value * 180 / Math.PI;
+  const deltaLongitude = radians(to.longitude - from.longitude);
+  const fromLatitude = radians(from.latitude);
+  const toLatitude = radians(to.latitude);
+  const y = Math.sin(deltaLongitude) * Math.cos(toLatitude);
+  const x = Math.cos(fromLatitude) * Math.sin(toLatitude)
+    - Math.sin(fromLatitude) * Math.cos(toLatitude) * Math.cos(deltaLongitude);
+  return (degrees(Math.atan2(y, x)) + 360) % 360;
+}
+function tiltMapCamera(map: MapView | null, pitch = 50, delay = 700) {
+  return setTimeout(async () => {
+    if (!map) return;
+    try {
+      const camera = await map.getCamera();
+      map.animateCamera({ ...camera, pitch }, { duration: 550 });
+    } catch {}
+  }, delay);
+}
 const AGOO_MESSENGER = 'https://m.me/MunicipalityofAgooLaUnion';
 function reportToAgoo(issue: string, ride: string, details = '') {
   const message = `Tri Fare Agoo report\nIssue: ${issue}\nRide: ${ride}${details ? `\nDetails: ${details}` : ''}`;
   Linking.openURL(`${AGOO_MESSENGER}?text=${encodeURIComponent(message)}`)
     .catch(() => Alert.alert('Messenger unavailable', 'Open Municipality of Agoo, La Union on Facebook Messenger.'));
+}
+
+function showAgooEmergencyHotlines() {
+  Alert.alert(
+    'Agoo emergency hotlines',
+    'PNP Agoo: 0939 836 8473\nMDRRMO Agoo: 0929 558 7444\nNational emergency: 911',
+    [
+      { text: 'Call PNP', onPress: () => Linking.openURL('tel:09398368473') },
+      { text: 'Call MDRRMO', onPress: () => Linking.openURL('tel:09295587444') },
+      { text: 'Close', style: 'cancel' },
+    ],
+  );
 }
 
 function TricycleIcon({ size = 24, color = C.green }: { size?: number; color?: string }) {
@@ -140,6 +248,7 @@ function TricycleIcon({ size = 24, color = C.green }: { size?: number; color?: s
 function PulsingDestinationMarker() {
   const pulse = useRef(new Animated.Value(0)).current;
   useEffect(() => {
+    syncPendingAdminData().catch(() => {});
     const animation = Animated.loop(Animated.timing(pulse, { toValue: 1, duration: 1400, useNativeDriver: true }));
     animation.start();
     return () => animation.stop();
@@ -150,6 +259,24 @@ function PulsingDestinationMarker() {
       transform: [{ scale: pulse.interpolate({ inputRange: [0, 1], outputRange: [.6, 1.8] }) }],
     }]} />
     <View style={s.wazePin}><MapPin color="white" size={22} fill="white" /></View>
+  </View>;
+}
+
+function NavigationArrow({ heading: _heading }: { heading: number }) {
+  const pulse = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const animation = Animated.loop(Animated.timing(pulse, { toValue: 1, duration: 1500, useNativeDriver: true }));
+    animation.start();
+    return () => animation.stop();
+  }, []);
+  return <View style={s.navigationArrowWrap}>
+    <Animated.View style={[s.navigationArrowPulse, {
+      opacity: pulse.interpolate({ inputRange: [0, 1], outputRange: [.3, 0] }),
+      transform: [{ scale: pulse.interpolate({ inputRange: [0, 1], outputRange: [.7, 1.55] }) }],
+    }]} />
+    <View style={s.navigationArrow}>
+      <HugeiconsIcon icon={UserIcon} size={27} color="white" strokeWidth={2.4} />
+    </View>
   </View>;
 }
 
@@ -168,6 +295,16 @@ function TriFareApp() {
   const [routeSeed, setRouteSeed] = useState<FareEntry | null>(null);
   const [justArrived, setJustArrived] = useState(false);
   const [arrivedTrip, setArrivedTrip] = useState<SavedTrip | null>(null);
+  const [theme, setThemeState] = useState<ThemeMode>('light');
+  const [satelliteMap, setSatelliteMap] = useState(true);
+  const [tiltedMap, setTiltedMap] = useState(true);
+  // Screenshot privacy is finished; every map now uses the device's real GPS position.
+  const privacyMode = false;
+  darkModeActive = theme === 'dark';
+  const setTheme = (next: ThemeMode) => {
+    setThemeState(next);
+    AsyncStorage.setItem(THEME_KEY, next).catch(() => {});
+  };
   useEffect(() => {
     Promise.all([AsyncStorage.getItem(PROFILE_KEY), AsyncStorage.getItem(SESSION_KEY)])
       .then(([value, session]) => setProfile(value && session === 'true' ? JSON.parse(value) : null))
@@ -178,46 +315,61 @@ function TriFareApp() {
       const trip = JSON.parse(value) as TripPlan;
       setActiveTrip(trip); setScreen('ride');
     }).catch(() => {});
+    AsyncStorage.getItem(THEME_KEY).then(value => {
+      if (value === 'dark' || value === 'light') setThemeState(value);
+    }).catch(() => {});
+  }, []);
+  useEffect(() => {
+    const syncTimer = setInterval(() => syncPendingAdminData().catch(() => {}), 30000);
+    return () => clearInterval(syncTimer);
   }, []);
   const startTrip = (trip: TripPlan) => {
     setActiveTrip(trip); setScreen('ride');
     AsyncStorage.setItem(ACTIVE_TRIP_KEY, JSON.stringify(trip)).catch(() => {});
   };
   const completeTrip = async (trip: SavedTrip) => {
-    const next = [trip, ...history];
-    setHistory(next); setActiveTrip(null); setArrivedTrip(trip); setJustArrived(true); setScreen('report');
+    const completedTrip = { ...trip, feedbackStatus: 'pending' as const };
+    const next = [completedTrip, ...history];
+    setHistory(next); setActiveTrip(null); setArrivedTrip(completedTrip); setJustArrived(true); setScreen('report');
     await Promise.all([
       AsyncStorage.setItem(HISTORY_KEY, JSON.stringify(next)),
       AsyncStorage.removeItem(ACTIVE_TRIP_KEY),
     ]);
   };
+  const saveFeedbackStatus = (tripId: string, feedbackStatus: SavedTrip['feedbackStatus']) => {
+    setHistory(current => {
+      const next = current.map(trip => trip.id === tripId ? { ...trip, feedbackStatus } : trip);
+      AsyncStorage.setItem(HISTORY_KEY, JSON.stringify(next)).catch(() => {});
+      return next;
+    });
+  };
   const open = (next: Screen) => { if (next === 'route') setRouteSeed(null); setPrevious(screen); setScreen(next); };
   const goBack = () => setScreen(previous === screen ? 'home' : previous);
-  const showNav = ['home', 'fare', 'history', 'more'].includes(screen);
-  const tab = (['home', 'fare', 'history', 'more'].includes(screen) ? screen : 'home') as Tab;
+  const showNav = ['home', 'fare', 'history', 'profile'].includes(screen);
+  const tab = (['home', 'fare', 'history', 'profile'].includes(screen) ? screen : 'home') as Tab;
   if (profile === undefined) return <View style={[s.flex, { backgroundColor: '#101510' }]} />;
   if (!profile) return <AuthScreen onAuthenticated={setProfile} />;
 
   return (
     <View style={s.app}>
-      <StatusBar style="dark" />
-      {screen === 'home' && <HomeScreen open={open} chooseSpot={(spot) => {
+      <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
+      {screen === 'home' && <HomeScreen open={open} privacyMode={privacyMode} satellite={satelliteMap} setSatellite={setSatelliteMap} tilt={tiltedMap} setTilt={setTiltedMap} chooseSpot={(spot) => {
         const index = TOURIST_SPOTS.findIndex(item => item.name === spot.name);
         setRouteSeed(TOURIST_FARE_DESTINATIONS[Math.max(0, index)]);
         setScreen('route');
       }} />}
       {screen === 'fare' && <FareCalculator open={open} />}
-      {screen === 'terminals' && <TerminalsScreen goBack={() => setScreen('home')} directions={() => { setRouteSeed(AGOO_MARKET_FARE); setScreen('route'); }} />}
+      {screen === 'terminals' && <TerminalsScreen satellite={satelliteMap} tilt={tiltedMap} goBack={() => setScreen('home')} directions={() => { setRouteSeed(AGOO_MARKET_FARE); setScreen('route'); }} />}
       {screen === 'history' && <HistoryScreen rides={history} />}
-      {screen === 'more' && <MoreScreen open={open} profile={profile} logout={async () => {
+      {screen === 'profile' && <ProfileScreen open={open} profile={profile} theme={theme} setTheme={setTheme} logout={async () => {
         await AsyncStorage.removeItem(SESSION_KEY);
         setProfile(null); setScreen('home');
       }} />}
-      {screen === 'matrix' && <FareMatrix goBack={goBack} />}
-      {screen === 'report' && <ReportScreen postTrip={justArrived} trip={arrivedTrip} goBack={() => { setJustArrived(false); setScreen('home'); }} noProblem={() => { setJustArrived(false); setScreen('home'); }} />}
-      {screen === 'route' && <RouteScreen goBack={() => setScreen('home')} start={startTrip} initialDestination={routeSeed} />}
-      {screen === 'ride' && activeTrip && <RideScreen trip={activeTrip} complete={completeTrip} />}
-      {showNav && <BottomNav active={tab} set={(next) => setScreen(next)} />}
+      {screen === 'matrix' && <FareMatrix goBack={goBack} satellite={satelliteMap} tilt={tiltedMap} />}
+      {screen === 'report' && <ReportScreen profile={profile} postTrip={justArrived} trip={arrivedTrip} goBack={() => { setJustArrived(false); setScreen('home'); }} markReported={() => { if (arrivedTrip) saveFeedbackStatus(arrivedTrip.id, 'reported'); }} noProblem={() => { if (arrivedTrip) saveFeedbackStatus(arrivedTrip.id, 'no_problem'); setJustArrived(false); setScreen('home'); }} />}
+      {screen === 'route' && <RouteScreen goBack={() => setScreen('home')} start={startTrip} initialDestination={routeSeed} satellite={satelliteMap} tilt={tiltedMap} privacyMode={privacyMode} />}
+      {screen === 'ride' && activeTrip && <RideScreen trip={activeTrip} complete={completeTrip} satellite={satelliteMap} tilt={tiltedMap} privacyMode={privacyMode} />}
+      {showNav && <BottomNav active={tab} set={(next) => setScreen(next)} profile={profile} theme={theme} />}
     </View>
   );
 }
@@ -225,7 +377,9 @@ function TriFareApp() {
 function AuthScreen({ onAuthenticated }: { onAuthenticated: (profile: UserProfile) => void }) {
   const [mode, setMode] = useState<'signup' | 'login'>('signup');
   const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(true);
   const [role, setRole] = useState<UserProfile['role']>('Agoo resident');
   const [photoUri, setPhotoUri] = useState('');
   const pickPhoto = async () => {
@@ -235,56 +389,67 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (profile: UserProfil
     if (!result.canceled) setPhotoUri(result.assets[0].uri);
   };
   const submit = async () => {
-    if (!name.trim() || !password.trim()) return Alert.alert('Complete your details', 'Enter your name and password.');
+    if (!email.trim() || !password.trim() || (mode === 'signup' && !name.trim())) return Alert.alert('Complete your details', 'Enter your email and password.');
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) return Alert.alert('Check your email', 'Enter a valid email address.');
     if (mode === 'signup') {
       if (!photoUri) return Alert.alert('Add a profile photo', 'Choose an image before creating your account.');
-      const created: UserProfile = { name: name.trim(), password, role, photoUri };
+      const created: UserProfile = { name: name.trim(), email: email.trim().toLowerCase(), password, role, photoUri };
       await Promise.all([
         AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(created)),
         AsyncStorage.setItem(SESSION_KEY, 'true'),
       ]);
+      const adminRecord: PendingAdminRecord = { clientId: `user-${created.email}`, fields: { name: created.name, email: created.email, role: created.role }, photoUri: created.photoUri };
+      sendAdminRecord('/api/users', adminRecord)
+        .catch(() => queueAdminRecord(PENDING_USERS_KEY, adminRecord))
+        .catch(() => {});
       onAuthenticated(created);
       return;
     }
     const saved = await AsyncStorage.getItem(PROFILE_KEY);
     const account = saved ? JSON.parse(saved) as UserProfile : null;
-    if (!account || account.name.toLowerCase() !== name.trim().toLowerCase() || account.password !== password) {
-      return Alert.alert('Login failed', 'The name or password does not match the account saved on this phone.');
+    if (!account || account.email?.toLowerCase() !== email.trim().toLowerCase() || account.password !== password) {
+      return Alert.alert('Login failed', 'The email or password does not match the account saved on this phone.');
     }
     await AsyncStorage.setItem(SESSION_KEY, 'true');
     onAuthenticated(account);
   };
-  return <View style={s.authPage}>
+  return <KeyboardAvoidingView style={s.authPage} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
     <StatusBar style="light" />
     <View style={s.authGlow} />
     <SafeAreaView style={s.authSafe} edges={['top', 'bottom']}>
+      <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} contentContainerStyle={s.authScroll}>
       <View><Text style={s.authKicker}>TRI FARE AGOO</Text><Text style={s.authTitle}>{mode === 'signup' ? 'Welcome aboard.' : 'Welcome back.'}</Text>
         <Text style={s.authSubtitle}>Fair routes, official fares, and safer trips around Agoo.</Text></View>
       <View style={s.authCard}>
         <Pressable style={s.authPhoto} onPress={pickPhoto}>
           {photoUri ? <Image source={{ uri: photoUri }} style={s.authPhotoImage} /> : <><Camera color="#8FE2B5" size={27} /><Text style={s.authPhotoText}>Add photo</Text></>}
         </Pressable>
-        <TextInput value={name} onChangeText={setName} placeholder="Your name" placeholderTextColor="#758078" style={s.authInput} />
+        {mode === 'signup' && <TextInput value={name} onChangeText={setName} placeholder="Your name" placeholderTextColor="#758078" style={s.authInput} />}
+        <TextInput value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" autoComplete="email" placeholder="Email address" placeholderTextColor="#758078" style={s.authInput} />
         {mode === 'signup' && <View style={s.authRoleRow}>
           {(['Agoo resident', 'Tourist'] as const).map(item => <Pressable key={item} onPress={() => setRole(item)} style={[s.authRole, role === item && s.authRoleActive]}>
             <Text style={[s.authRoleText, role === item && { color: C.white }]}>{item}</Text>
           </Pressable>)}
         </View>}
-        <TextInput value={password} onChangeText={setPassword} secureTextEntry placeholder="Password" placeholderTextColor="#758078" style={s.authInput} />
+        <View style={s.authPasswordRow}><TextInput value={password} onChangeText={setPassword} secureTextEntry={!showPassword} autoCapitalize="none" placeholder="Password" placeholderTextColor="#758078" style={s.authPasswordInput} />
+          <Pressable accessibilityLabel={showPassword ? 'Hide password' : 'Show password'} onPress={() => setShowPassword(value => !value)}>{showPassword ? <EyeOff color="#9FAAA2" size={21} /> : <Eye color="#9FAAA2" size={21} />}</Pressable>
+        </View>
         <Pressable style={s.authSubmit} onPress={submit}><Text style={s.buttonWhite}>{mode === 'signup' ? 'Create account' : 'Log in'}</Text><ArrowRight color="white" size={19} /></Pressable>
         <Pressable onPress={() => setMode(value => value === 'signup' ? 'login' : 'signup')}><Text style={s.authSwitch}>
           {mode === 'signup' ? 'Already registered? Log in' : 'New to Tri Fare Agoo? Sign up'}
         </Text></Pressable>
       </View>
       <Text style={s.authPrivacy}>Your profile is stored privately on this device.</Text>
+      </ScrollView>
     </SafeAreaView>
-  </View>;
+  </KeyboardAvoidingView>;
 }
 
-function AppMap({ markers = true, route = false, routePoints, pinnedPoint, follow = false, satellite = false, traffic = false, tilt = true, touristSpots = false, touristSpotItems = TOURIST_SPOTS, selectedSpot, onSpotPress, onMapPress }: { markers?: boolean; route?: boolean; routePoints?: RoutePoint[]; pinnedPoint?: RoutePoint | null; follow?: boolean; satellite?: boolean; traffic?: boolean; tilt?: boolean; touristSpots?: boolean; touristSpotItems?: TouristSpot[]; selectedSpot?: TouristSpot; onSpotPress?: (spot: TouristSpot) => void; onMapPress?: (point: RoutePoint) => void }) {
+function AppMap({ markers = true, route = false, routePoints, pinnedPoint, displayLocation, follow = false, satellite = false, traffic = false, tilt = true, touristSpots = false, touristSpotItems = TOURIST_SPOTS, selectedSpot, onSpotPress, onMapPress }: { markers?: boolean; route?: boolean; routePoints?: RoutePoint[]; pinnedPoint?: RoutePoint | null; displayLocation?: RoutePoint; follow?: boolean; satellite?: boolean; traffic?: boolean; tilt?: boolean; touristSpots?: boolean; touristSpotItems?: TouristSpot[]; selectedSpot?: TouristSpot; onSpotPress?: (spot: TouristSpot) => void; onMapPress?: (point: RoutePoint) => void }) {
   const map = useRef<MapView>(null);
   const [region, setRegion] = useState(AGOO);
   const [permission, setPermission] = useState(false);
+  const [previewRoute, setPreviewRoute] = useState<RoutePoint[]>([]);
   useEffect(() => {
     if (!follow) return;
     let watcher: Location.LocationSubscription | undefined;
@@ -307,20 +472,34 @@ function AppMap({ markers = true, route = false, routePoints, pinnedPoint, follo
     map.current?.animateCamera({ center: selectedSpot, pitch: 58, heading: 12, altitude: 950, zoom: 16 }, { duration: 850 });
   }, [selectedSpot]);
   useEffect(() => {
-    if (!routePoints || routePoints.length < 2) return;
+    if (!routePoints || routePoints.length < 2) { setPreviewRoute([]); return; }
     map.current?.fitToCoordinates(routePoints, { edgePadding: { top: 120, right: 55, bottom: 330, left: 55 }, animated: true });
-  }, [routePoints?.length]);
+    const tiltTimer = tiltMapCamera(map.current, tilt ? 50 : 0, 750);
+    let shown = 1;
+    setPreviewRoute(routePoints.slice(0, shown));
+    const step = Math.max(1, Math.ceil(routePoints.length / 70));
+    const timer = setInterval(() => {
+      shown = Math.min(routePoints.length, shown + step);
+      setPreviewRoute(routePoints.slice(0, shown));
+      if (shown >= routePoints.length) clearInterval(timer);
+    }, 30);
+    return () => { clearInterval(timer); clearTimeout(tiltTimer); };
+  }, [routePoints, tilt]);
   return (
     <MapView
       ref={map}
       style={StyleSheet.absoluteFill}
       provider={Platform.OS === 'android' ? PROVIDER_GOOGLE : undefined}
       initialRegion={region}
-      showsUserLocation={permission}
+      showsUserLocation={permission && !routePoints?.length}
       showsMyLocationButton={false}
       pitchEnabled rotateEnabled
       mapType={satellite ? 'hybrid' : 'standard'}
+      userInterfaceStyle={darkModeActive ? 'dark' : 'light'}
+      customMapStyle={darkModeActive ? DARK_MAP_STYLE : []}
       showsTraffic={traffic}
+      showsCompass={false}
+      legalLabelInsets={touristSpots && Platform.OS === 'ios' ? { top: 0, right: 0, bottom: 126, left: 18 } : undefined}
       onPress={({ nativeEvent }) => onMapPress?.(nativeEvent.coordinate)}
       camera={{ center: { latitude: region.latitude, longitude: region.longitude }, pitch: tilt ? 58 : 0, heading: tilt ? 8 : 0, altitude: 1800, zoom: 15 }}
     >
@@ -329,22 +508,55 @@ function AppMap({ markers = true, route = false, routePoints, pinnedPoint, follo
           <View style={[s.mapPin, i === 1 && { backgroundColor: C.blue }]}><TricycleIcon color="white" size={20} /></View>
         </Marker>
       ))}
-      {touristSpots && touristSpotItems.map(spot => <Marker key={spot.name} coordinate={spot} title={spot.name} onPress={() => onSpotPress?.(spot)}>
-        {selectedSpot?.name === spot.name ? <PulsingDestinationMarker /> : <View style={s.tourPin}><View style={s.tourPinDot} /></View>}
-      </Marker>)}
+      {touristSpots && selectedSpot && <Marker coordinate={selectedSpot} title={selectedSpot.name} onPress={() => onSpotPress?.(selectedSpot)}>
+        <PulsingDestinationMarker />
+      </Marker>}
       {pinnedPoint && <Marker coordinate={pinnedPoint} title="Pinned destination"><View style={s.pinnedMapIcon}><MapPin color="white" size={22} fill="white" /></View></Marker>}
-      {routePoints && routePoints.length > 1 && <Polyline coordinates={routePoints} strokeColor="#2188FF" strokeWidth={6} />}
+      {displayLocation && !routePoints?.length && <Marker coordinate={displayLocation} title="Approximate location"><View style={s.privateLocationMarker}><View style={s.privateLocationDot} /></View></Marker>}
+      {previewRoute.length > 1 && <>
+        <Polyline coordinates={previewRoute} strokeColor="rgba(20,35,45,.72)" strokeWidth={10} />
+        <Polyline coordinates={previewRoute} strokeColor="#39A9E8" strokeWidth={6} lineCap="round" lineJoin="round" />
+        <Marker coordinate={previewRoute[0]} anchor={{ x: .5, y: .5 }} flat zIndex={20}>
+          <NavigationArrow heading={routeHeading(previewRoute[0], previewRoute[1])} />
+        </Marker>
+      </>}
       {route && <Polyline coordinates={routeLine} strokeColor={C.green} strokeWidth={6} />}
     </MapView>
   );
 }
 
-function HomeScreen({ open, chooseSpot }: { open: (s: Screen) => void; chooseSpot: (spot: TouristSpot) => void }) {
-  const [satellite, setSatellite] = useState(true);
-  const [tilt, setTilt] = useState(true);
+function ExploreDestinationCard({ spot, selected, distanceKm, onPress, onGo, showGo = true }: { spot: TouristSpot; selected: boolean; distanceKm: number | null; onPress: () => void; onGo: () => void; showGo?: boolean }) {
+  const interaction = useRef(new Animated.Value(0)).current;
+  const animate = (toValue: number) => Animated.spring(interaction, {
+    toValue,
+    useNativeDriver: true,
+    damping: 15,
+    stiffness: 210,
+    mass: .7,
+  }).start();
+  return <Animated.View style={[s.destinationCardOuter, selected && s.destinationCardSelected, {
+    transform: [{ scale: interaction.interpolate({ inputRange: [0, 1], outputRange: [1, 1.04] }) }],
+  }]}>
+    <Pressable accessibilityRole="button" accessibilityLabel={`Explore ${spot.name}`} onPress={onPress} onPressIn={() => animate(1)} onPressOut={() => animate(0)} style={s.destinationCard}>
+      <Animated.Image source={VERIFIED_PLACE_PHOTOS[spot.name]} style={[s.destinationCardImage, {
+        transform: [{ scale: interaction.interpolate({ inputRange: [0, 1], outputRange: [1, 1.11] }) }],
+      }]} />
+      <LinearGradient colors={['transparent', 'rgba(8,58,39,.56)', 'rgba(5,45,30,.97)']} locations={[0, .48, 1]} style={StyleSheet.absoluteFill} />
+      {showGo && <Pressable accessibilityLabel={`Go to ${spot.name}`} style={s.destinationCardGo} onPress={(event) => { event.stopPropagation(); onGo(); }}><Navigation size={18} color={C.white} fill={C.white} /></Pressable>}
+      <View style={s.destinationCardContent}>
+        <Text numberOfLines={2} style={s.destinationCardTitle}>{spot.name}</Text>
+        <Text style={s.destinationCardStats}>{distanceKm == null ? 'Locating…' : `${distanceKm.toFixed(1)} km from you`}</Text>
+      </View>
+    </Pressable>
+  </Animated.View>;
+}
+
+function HomeScreen({ open, chooseSpot, satellite, setSatellite, tilt, setTilt, privacyMode }: { open: (s: Screen) => void; chooseSpot: (spot: TouristSpot) => void; satellite: boolean; setSatellite: React.Dispatch<React.SetStateAction<boolean>>; tilt: boolean; setTilt: React.Dispatch<React.SetStateAction<boolean>>; privacyMode: boolean }) {
   const [currentLabel, setCurrentLabel] = useState('Finding your location…');
   const [selectedSpot, setSelectedSpot] = useState<TouristSpot>(TOURIST_SPOTS[0]);
+  const [focusedExploreCard, setFocusedExploreCard] = useState(false);
   const [origin, setOrigin] = useState<RoutePoint>({ latitude: AGOO.latitude, longitude: AGOO.longitude });
+  const [locationReady, setLocationReady] = useState(false);
   const [homeRoute, setHomeRoute] = useState<RoutePoint[]>([]);
   const [spotDetails, setSpotDetails] = useState<Record<string, AgooPlace>>({});
   const homeSheetY = useRef(new Animated.Value(0)).current;
@@ -370,83 +582,75 @@ function HomeScreen({ open, chooseSpot }: { open: (s: Screen) => void; chooseSpo
     (async () => {
       const permission = await Location.requestForegroundPermissionsAsync();
       if (permission.status !== 'granted') { setCurrentLabel('Location permission needed'); return; }
-      const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
       setOrigin({ latitude: position.coords.latitude, longitude: position.coords.longitude });
-      const places = await Location.reverseGeocodeAsync(position.coords);
-      const place = places[0];
-      setCurrentLabel(place ? [place.district || place.subregion, place.city, place.region].filter(Boolean).join(', ') : 'Current GPS location');
-    })().catch(() => setCurrentLabel('Current GPS location'));
+      setLocationReady(true);
+      setCurrentLabel('Agoo, La Union');
+    })().catch(() => setCurrentLabel('Agoo, La Union'));
   }, []);
   const animateHomeRoute = async (destination: RoutePoint | string) => {
     setHomeRoute([]);
     try {
-      const result = await computeGoogleRoute(origin, destination);
+      const visibleOrigin = privacyMode ? AGOO : origin;
+      const result = await computeGoogleRoute(visibleOrigin, destination);
       if (!result?.points.length) throw new Error('No route returned');
-      const points = result.points;
-      let count = Math.min(2, points.length);
-      const step = Math.max(1, Math.ceil(points.length / 45));
-      setHomeRoute(points.slice(0, count));
-      const timer = setInterval(() => {
-        count = Math.min(points.length, count + step);
-        setHomeRoute(points.slice(0, count));
-        if (count >= points.length) clearInterval(timer);
-      }, 24);
+      setHomeRoute(result.points);
     } catch {
       const point = typeof destination === 'string' ? null : destination;
-      if (point) setHomeRoute([origin, point]);
+      if (point) setHomeRoute([privacyMode ? AGOO : origin, point]);
     }
   };
-  const selectHomeSpot = (spot: TouristSpot) => {
+  const selectHomeSpot = (spot: TouristSpot, focusCard = false) => {
     setSelectedSpot(spot);
+    setFocusedExploreCard(focusCard && Boolean(VERIFIED_PLACE_PHOTOS[spot.name]));
     animateHomeRoute({ latitude: spot.latitude, longitude: spot.longitude });
-    settleHomeSheet(true);
+    settleHomeSheet(!focusCard);
   };
   return (
     <View style={s.flex}>
-      <View style={s.mapArea}><AppMap markers={false} follow satellite={satellite} traffic tilt={tilt} touristSpots touristSpotItems={verifiedSpots} selectedSpot={verifiedSelected} onSpotPress={selectHomeSpot} routePoints={homeRoute} /></View>
+      <View style={s.mapArea}><AppMap markers={false} displayLocation={privacyMode ? AGOO : undefined} follow={!privacyMode} satellite={satellite} traffic tilt={tilt} touristSpots touristSpotItems={verifiedSpots} selectedSpot={verifiedSelected} onSpotPress={selectHomeSpot} routePoints={homeRoute.length ? [privacyMode ? AGOO : origin, ...homeRoute] : []} /></View>
       <SafeAreaView style={s.homeOverlay} edges={['top']}>
         <View style={s.homeExploreHeading}>
           <Text style={s.exploreKicker}>DISCOVER AGOO</Text>
         </View>
         <View style={s.mapTools}>
-          <Tool icon={<Layers3 size={20} color={C.ink} />} onPress={() => setSatellite(x => !x)} />
+          <Tool icon={<Layers3 size={20} color={darkModeActive ? C.white : C.ink} />} onPress={() => setSatellite(x => !x)} />
           <Tool icon={<LocateFixed size={20} color={C.blue} />} onPress={() => Alert.alert('Live location', 'The map is following your current GPS location.')} />
           <Tool label={tilt ? '3D' : '2D'} onPress={() => setTilt(x => !x)} />
         </View>
       </SafeAreaView>
-      <Animated.View {...homeSheetPan.panHandlers} style={[s.homeExploreSheet, { transform: [{ translateY: homeSheetY }] }]}>
+      <View style={s.homeSheetViewport} pointerEvents="box-none">
+      <Animated.View {...homeSheetPan.panHandlers} style={[s.homeExploreSheet, focusedExploreCard && s.homeExploreSheetFocused, { transform: [{ translateY: homeSheetY }] }]}>
         <Pressable hitSlop={8} style={s.dragHandleArea} onPress={() => settleHomeSheet(homeSheetOffset.current === 0)}><View style={s.handle} /></Pressable>
-        <View style={s.placeHeader}>
-          <View style={s.grow}><Text style={s.placeCategory}>{selectedSpot.category}</Text><Text style={s.placeTitle}>{selectedSpot.name}</Text></View>
-        </View>
-        <Pressable style={s.exploreGoButton} onPress={() => chooseSpot(selectedSpot)}>
-          <Navigation color="white" size={18} fill="white" />
+        {focusedExploreCard ? <View style={s.focusedExploreRow}>
+          <ExploreDestinationCard spot={selectedSpot} selected showGo={false} distanceKm={locationReady ? distanceMetres(origin, selectedSpot) / 1000 : null} onPress={() => setFocusedExploreCard(false)} onGo={() => chooseSpot(selectedSpot)} />
+          <View style={s.focusedExploreDetails}><Pressable accessibilityLabel="Back to all Explore places" onPress={() => setFocusedExploreCard(false)} style={s.focusedExploreBack}><ArrowLeft size={17} color={darkModeActive ? C.white : C.ink} /><Text style={s.focusedExploreBackText}>All places</Text></Pressable><Text style={s.placeCategory}>{selectedSpot.category}</Text><Text style={s.focusedExploreTitle}>{selectedSpot.name}</Text><Text numberOfLines={4} style={s.focusedExploreDescription}>{selectedSpot.description}</Text></View>
+        </View> : <FlatList horizontal data={EXPLORE_PLACES} keyExtractor={item => item.name} showsHorizontalScrollIndicator={false}
+          snapToInterval={152} decelerationRate="fast"
+          contentContainerStyle={{ gap: 12, paddingTop: 4, paddingRight: 4, paddingBottom: 14 }}
+          renderItem={({ item }) => <ExploreDestinationCard spot={item} selected={selectedSpot.name === item.name}
+            distanceKm={locationReady ? distanceMetres(origin, item) / 1000 : null} onPress={() => selectHomeSpot(item, true)} onGo={() => chooseSpot(item)} />} />}
+        {focusedExploreCard && <Pressable style={s.exploreGoButton} onPress={() => chooseSpot(selectedSpot)}>
+          <Navigation color={C.white} size={18} fill={C.white} />
           <Text style={s.buttonWhite}>Go to {selectedSpot.name}</Text>
-          <ChevronRight color="white" size={18} />
-        </Pressable>
-        <Text style={s.placeDescription}>{selectedSpot.description}</Text>
-        <View style={s.placeMeta}><MapPin color="#7E8A82" size={15} /><Text style={s.placeMetaText}>{selectedSpot.distance}</Text>
-          {spotDetails[selectedSpot.name]?.rating ? <Text style={s.placeRating}>★ {spotDetails[selectedSpot.name].rating?.toFixed(1)} · {spotDetails[selectedSpot.name].reviewCount ?? 0} reviews</Text> : null}
-        </View>
-        <Pressable style={s.homeWhereTo} onPress={() => open('route')}>
+          <ChevronRight color={C.white} size={18} />
+        </Pressable>}
+        {!focusedExploreCard && <View style={s.placeHeader}>
+          <View style={s.grow}><Text style={s.placeCategory}>{selectedSpot.category}</Text><Text style={s.placeTitle}>{selectedSpot.name}</Text></View>
+        </View>}
+        {spotDetails[selectedSpot.name]?.rating ? <View style={s.placeMeta}><Text style={s.placeRating}>★ {spotDetails[selectedSpot.name].rating?.toFixed(1)} · {spotDetails[selectedSpot.name].reviewCount ?? 0} reviews</Text></View> : null}
+        {!focusedExploreCard && <Pressable style={s.homeWhereTo} onPress={() => open('route')}>
           <Search color="#99A29B" size={23} />
           <View style={s.grow}><Text style={s.homeWhereTitle}>Where are you headed?</Text><Text numberOfLines={1} style={s.homeWhereLocation}>From {currentLabel}</Text></View>
           <View style={s.homeGoCircle}><Navigation color="white" size={18} fill="white" /></View>
-        </Pressable>
-        <FlatList horizontal data={EXPLORE_PLACES} keyExtractor={item => item.name} showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ gap: 10, paddingTop: 12, paddingRight: 4 }}
-          renderItem={({ item, index }) => <Pressable style={[s.placeThumb, selectedSpot.name === item.name && s.placeThumbActive]} onPress={() => selectHomeSpot(item)}>
-            <View style={[s.thumbArt, { backgroundColor: '#34443A' }]}>
-              <Image source={VERIFIED_PLACE_PHOTOS[item.name]} style={s.placePhoto} />
-            </View>
-            <Text numberOfLines={1} style={s.thumbText}>{item.name}</Text>
-          </Pressable>} />
+        </Pressable>}
       </Animated.View>
+      </View>
     </View>
   );
 }
 
-function RouteScreen({ goBack, start, initialDestination }: { goBack: () => void; start: (trip: TripPlan) => void; initialDestination?: FareEntry | null }) {
+function RouteScreen({ goBack, start, initialDestination, satellite, tilt, privacyMode }: { goBack: () => void; start: (trip: TripPlan) => void; initialDestination?: FareEntry | null; satellite: boolean; tilt: boolean; privacyMode: boolean }) {
   const map = useRef<MapView>(null);
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<FareEntry>(initialDestination ?? { barangay: 'Choose destination', distance: '0', regular: 0, special: 0 });
@@ -507,16 +711,23 @@ function RouteScreen({ goBack, start, initialDestination }: { goBack: () => void
   const loadRoute = async (entry: FareEntry) => {
     setSelected(entry); setCustomPoint(null); setCustomName(''); setQuery(''); setPlaces([]); setLoading(true); setResult(null);
     try {
-      const permission = await Location.requestForegroundPermissionsAsync();
-      let startPoint = origin;
-      if (permission.status === 'granted') {
+      let startPoint = privacyMode ? AGOO : origin;
+      if (!privacyMode) {
+        const permission = await Location.requestForegroundPermissionsAsync();
+        if (permission.status === 'granted') {
         const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
         startPoint = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
         setOrigin(startPoint);
+        }
+      } else {
+        setOrigin(AGOO);
       }
       const route = await computeGoogleRoute(startPoint, `${entry.barangay}, Agoo, La Union, Philippines`);
       setResult(route);
-      if (route?.points.length) map.current?.fitToCoordinates(route.points, { edgePadding: { top: 130, right: 55, bottom: 340, left: 55 }, animated: true });
+      if (route?.points.length) {
+        map.current?.fitToCoordinates(route.points, { edgePadding: { top: 130, right: 55, bottom: 340, left: 55 }, animated: true });
+        tiltMapCamera(map.current, tilt ? 50 : 0, 800);
+      }
     } catch {
       Alert.alert('Could not load the road route', 'Check the Google Routes API key or open this trip in Google Maps.');
     } finally { setLoading(false); }
@@ -524,14 +735,21 @@ function RouteScreen({ goBack, start, initialDestination }: { goBack: () => void
   const loadPointRoute = async (point: RoutePoint, name: string) => {
     setPinMode(false); setCustomPoint(point); setCustomName(name); setQuery(''); setPlaces([]); setLoading(true); setResult(null);
     try {
-      const permission = await Location.requestForegroundPermissionsAsync();
-      let startPoint = origin;
-      if (permission.status === 'granted') {
+      let startPoint = privacyMode ? AGOO : origin;
+      if (!privacyMode) {
+        const permission = await Location.requestForegroundPermissionsAsync();
+        if (permission.status === 'granted') {
         const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
         startPoint = { latitude: pos.coords.latitude, longitude: pos.coords.longitude }; setOrigin(startPoint);
+        }
+      } else {
+        setOrigin(AGOO);
       }
       const route = await computeGoogleRoute(startPoint, point); setResult(route);
-      if (route?.points.length) map.current?.fitToCoordinates(route.points, { edgePadding: { top: 130, right: 55, bottom: 360, left: 55 }, animated: true });
+      if (route?.points.length) {
+        map.current?.fitToCoordinates(route.points, { edgePadding: { top: 130, right: 55, bottom: 360, left: 55 }, animated: true });
+        tiltMapCamera(map.current, tilt ? 50 : 0, 800);
+      }
     } catch { Alert.alert('Route unavailable', 'Could not calculate a road route to this pin.'); }
     finally { setLoading(false); }
   };
@@ -555,16 +773,23 @@ function RouteScreen({ goBack, start, initialDestination }: { goBack: () => void
   return (
     <View style={[s.flex, { backgroundColor: '#111411' }]}>
       <MapView ref={map} style={StyleSheet.absoluteFill} provider={Platform.OS === 'android' ? PROVIDER_GOOGLE : undefined}
-        initialRegion={AGOO} mapType="hybrid" showsTraffic showsBuildings showsUserLocation
+        mapType={satellite ? 'hybrid' : 'standard'} showsTraffic showsBuildings showsUserLocation={!privacyMode} showsCompass={false}
+        userInterfaceStyle={darkModeActive ? 'dark' : 'light'} customMapStyle={darkModeActive ? DARK_MAP_STYLE : []}
+        pitchEnabled rotateEnabled
         onPress={({ nativeEvent }) => { if (pinMode) loadPointRoute(nativeEvent.coordinate, 'Pinned destination'); }}
-        camera={{ center: origin, pitch: 58, heading: 8, altitude: 1800, zoom: 15 }}>
-        {animatedRoute.length > 1 ? <Polyline coordinates={animatedRoute} strokeColor="#48A8FF" strokeWidth={6} /> : null}
-        <Marker coordinate={origin}><View style={s.routeNode}><Navigation size={15} color="white" fill="white" /></View></Marker>
+        initialCamera={{ center: origin, pitch: tilt ? 50 : 0, heading: tilt ? 8 : 0, altitude: 1800, zoom: 15 }}>
+        {animatedRoute.length > 1 ? <>
+          <Polyline coordinates={[privacyMode ? AGOO : origin, ...animatedRoute]} strokeColor="rgba(20,35,45,.72)" strokeWidth={10} />
+          <Polyline coordinates={[privacyMode ? AGOO : origin, ...animatedRoute]} strokeColor="#39A9E8" strokeWidth={6} lineCap="round" lineJoin="round" />
+        </> : null}
+        <Marker coordinate={privacyMode ? AGOO : origin} anchor={{ x: .5, y: .5 }} zIndex={20}>
+          <NavigationArrow heading={result?.points.length && result.points.length > 1 ? routeHeading(result.points[0], result.points[1]) : 0} />
+        </Marker>
         {result?.points.length ? <Marker coordinate={result.points[result.points.length - 1]} title={destinationName}><PulsingDestinationMarker /></Marker> : null}
       </MapView>
       <SafeAreaView style={s.routeTopSafe} edges={['top']} pointerEvents="box-none">
         <View style={s.routeTopRow}>
-          <IconButton icon={<ArrowLeft size={22} color={C.ink} />} onPress={goBack} />
+          <Pressable accessibilityLabel="Back" onPress={goBack} style={s.routeBackButton}><ArrowLeft size={22} color={darkModeActive ? C.white : C.ink} /></Pressable>
           <View style={s.routeSearch}>
             <Search color={C.muted} size={19} />
             <TextInput value={query} onChangeText={setQuery} placeholder="Where to?" placeholderTextColor="#A5ADA7" style={s.routeInput} />
@@ -581,7 +806,7 @@ function RouteScreen({ goBack, start, initialDestination }: { goBack: () => void
             </Pressable>)}</ScrollView>}
       </SafeAreaView>
       <Pressable accessibilityLabel={pinMode ? 'Cancel pin location' : 'Pin location'} style={[s.pinLocationButton, pinMode && s.pinLocationButtonActive]} onPress={() => setPinMode(value => !value)}>
-        <MapPinned size={21} color={pinMode ? C.white : C.ink} />
+        <MapPinned size={21} color={pinMode || darkModeActive ? C.white : C.ink} />
       </Pressable>
       <Animated.View style={[s.panoRouteCard, { transform: [{ translateY: routeSheetY }] }]}>
         <Pressable {...routePan.panHandlers} hitSlop={8} style={s.dragHandleArea} onPress={() => settleRouteSheet(routeSheetOffset.current === 0)}><View style={s.handle} /></Pressable>
@@ -612,12 +837,17 @@ function RouteScreen({ goBack, start, initialDestination }: { goBack: () => void
   );
 }
 
-function RideScreen({ trip, complete }: { trip: TripPlan; complete: (trip: SavedTrip) => void }) {
+function RideScreen({ trip, complete, satellite, tilt, privacyMode }: { trip: TripPlan; complete: (trip: SavedTrip) => void; satellite: boolean; tilt: boolean; privacyMode: boolean }) {
   const map = useRef<MapView>(null);
-  const [sharing, setSharing] = useState(true);
   const [current, setCurrent] = useState<RoutePoint>(trip.origin);
   const [trackedMetres, setTrackedMetres] = useState(0);
   const previousPoint = useRef<RoutePoint>(trip.origin);
+  const animatedPosition = useRef(new AnimatedRegion({
+    latitude: (privacyMode ? AGOO : trip.origin).latitude,
+    longitude: (privacyMode ? AGOO : trip.origin).longitude,
+    latitudeDelta: 0,
+    longitudeDelta: 0,
+  })).current;
   useEffect(() => {
     let watcher: Location.LocationSubscription | undefined;
     (async () => {
@@ -632,28 +862,31 @@ function RideScreen({ trip, complete }: { trip: TripPlan; complete: (trip: Saved
           const next = { latitude: coords.latitude, longitude: coords.longitude };
           const step = distanceMetres(previousPoint.current, next);
           if ((coords.accuracy ?? 999) <= 50 && step >= 1 && step <= 100) setTrackedMetres(total => total + step);
-          previousPoint.current = next; setCurrent(next);
-          map.current?.animateCamera({ center: next, pitch: 58, heading: coords.heading ?? 0, zoom: 17 }, { duration: 700 });
+          previousPoint.current = next;
+          setCurrent(next);
+          const displayPoint = privacyMode ? AGOO : next;
+          animatedPosition.timing({ ...displayPoint, latitudeDelta: 0, longitudeDelta: 0, duration: 900, useNativeDriver: false } as any).start();
         },
       );
     })();
     return () => watcher?.remove();
   }, []);
   const directToDestination = distanceMetres(current, trip.destinationPoint);
+  const routeIndex = nearestRouteIndex(trip.route, current);
+  const traveledRoute = [...trip.route.slice(0, routeIndex + 1), current];
+  const remainingRoute = [current, ...trip.route.slice(routeIndex + 1)];
   const remainingMetres = routeRemainingMetres(trip.route, current);
   const arrived = directToDestination <= 30;
   const progress = Math.min(1, Math.max(0, 1 - remainingMetres / Math.max(1, trip.routeDistanceKm * 1000)));
   const remainingMinutes = Math.max(1, Math.ceil(trip.etaMinutes * (1 - progress)));
   const finish = () => {
     const drivenKm = Math.max(0, trackedMetres / 1000);
-    const regularFare = 20 + Math.ceil(Math.max(0, drivenKm - 4)) * 2;
-    const finalFare = trip.special ? Math.round(regularFare * .8) : regularFare;
     complete({
       id: `${Date.now()}`,
       destination: trip.destination,
       completedAt: new Date().toISOString(),
       distanceKm: drivenKm,
-      fare: finalFare,
+      fare: trip.fare,
     });
   };
   const confirmArrival = () => {
@@ -667,24 +900,30 @@ function RideScreen({ trip, complete }: { trip: TripPlan; complete: (trip: Saved
   return (
     <View style={[s.flex, { backgroundColor: '#111411' }]}>
       <MapView ref={map} style={StyleSheet.absoluteFill} provider={Platform.OS === 'android' ? PROVIDER_GOOGLE : undefined}
-        initialRegion={AGOO} mapType="hybrid" showsTraffic showsBuildings showsUserLocation followsUserLocation
-        camera={{ center: current, pitch: 58, heading: 0, altitude: 1000, zoom: 17 }}>
-        <Polyline coordinates={trip.route} strokeColor="#48A8FF" strokeWidth={7} />
+        mapType={satellite ? 'hybrid' : 'standard'} showsTraffic showsBuildings showsCompass={false} zoomEnabled scrollEnabled rotateEnabled pitchEnabled
+        userInterfaceStyle={darkModeActive ? 'dark' : 'light'} customMapStyle={darkModeActive ? DARK_MAP_STYLE : []}
+        initialCamera={{ center: privacyMode ? AGOO : trip.origin, pitch: tilt ? 50 : 0, heading: 0, altitude: 260, zoom: 17 }}>
+        <Polyline coordinates={trip.route} strokeColor="rgba(20,35,45,.72)" strokeWidth={11} />
+        {traveledRoute.length > 1 && <Polyline coordinates={traveledRoute} strokeColor="rgba(205,218,222,.78)" strokeWidth={7} />}
+        {remainingRoute.length > 1 && <Polyline coordinates={remainingRoute} strokeColor="#39A9E8" strokeWidth={7} lineCap="round" lineJoin="round" />}
+        <Marker.Animated coordinate={animatedPosition as any} anchor={{ x: .5, y: .5 }} flat>
+          <NavigationArrow heading={0} />
+        </Marker.Animated>
         <Marker coordinate={trip.destinationPoint} title={trip.destination}><View style={s.destinationMarker}><Flag color="white" size={18} fill="white" /></View></Marker>
       </MapView>
       <SafeAreaView style={s.rideStats} edges={['top']}>
         <View style={s.statsCard}>
-          <Stat label="TRIP TIME" value={`${remainingMinutes} min`} green /><Stat label="DRIVEN KM" value={`${(trackedMetres / 1000).toFixed(2)} km`} green /><Stat label="LIVE FARE" value={peso((trip.special ? .8 : 1) * (20 + Math.ceil(Math.max(0, trackedMetres / 1000 - 4)) * 2))} green />
+          <Stat label="TRIP TIME" value={`${remainingMinutes} min`} green /><Stat label="DRIVEN KM" value={`${(trackedMetres / 1000).toFixed(2)} km`} green /><Stat label="LIVE FARE" value={peso(trip.fare)} green />
         </View>
       </SafeAreaView>
       <View style={s.rideSheet}>
         <View style={s.rowBetween}><View style={s.grow}><Text style={s.cardTitle}>{trip.destination}</Text><Text style={s.caption}>{remainingMetres < 1000 ? `${Math.round(remainingMetres)} m` : `${(remainingMetres / 1000).toFixed(1)} km`} remaining · about {remainingMinutes} min</Text></View><View style={s.liveDot} /></View>
         <View style={s.progressTrack}><View style={[s.progressFill, { width: `${progress * 100}%` }]} /></View>
-        <View style={s.liveShare}><ShieldCheck color={C.green} size={22} /><View style={s.grow}>
-          <Text style={s.cardTitle}>Real-time GPS tracking is ON</Text><Text style={s.caption}>Arrive activates within 30 metres</Text>
-        </View><Switch value={sharing} onValueChange={setSharing} trackColor={{ true: C.green }} /></View>
         <View style={s.row}>
-          <Pressable style={[s.actionButton, { backgroundColor: C.mint }]} onPress={() => Share.share({ message: `I’m riding to ${trip.destination}. Live trip via Tri Fare Agoo.` })}><Send color={C.ink} size={21} /><Text style={s.buttonDark}>Share Trip</Text></Pressable>
+          <Pressable style={[s.actionButton, { backgroundColor: C.mint }]} onPress={() => Share.share({
+            title: 'My Tri Fare Agoo trip',
+            message: `I’m riding to ${trip.destination}.\n\nMy current location:\nhttps://www.google.com/maps?q=${current.latitude},${current.longitude}\n\nShared from Tri Fare Agoo.`,
+          })}><Send color={C.ink} size={21} /><Text style={s.buttonDark}>Share Trip</Text></Pressable>
           <Pressable style={[s.actionButton, { backgroundColor: C.green }]} onPress={confirmArrival}><Check color="white" size={22} /><Text style={s.buttonWhite}>Arrive</Text></Pressable>
         </View>
       </View>
@@ -755,7 +994,7 @@ function FareCalculator({ open }: { open: (s: Screen) => void }) {
   );
 }
 
-function FareMatrix({ goBack }: { goBack: () => void }) {
+function FareMatrix({ goBack, satellite, tilt }: { goBack: () => void; satellite: boolean; tilt: boolean }) {
   const [query, setQuery] = useState('');
   const [matrixTab, setMatrixTab] = useState<'regular' | 'special' | 'zone'>('regular');
   const special = matrixTab === 'special';
@@ -766,7 +1005,7 @@ function FareMatrix({ goBack }: { goBack: () => void }) {
       <View style={s.inlineSearch}><Search size={20} color={C.muted} /><TextInput value={query} onChangeText={setQuery} placeholder="Search barangay or route" style={s.input} /></View>
       <View style={s.segment}><Segment text="Regular" active={matrixTab === 'regular'} onPress={() => setMatrixTab('regular')} /><Segment text="Special" active={matrixTab === 'special'} onPress={() => setMatrixTab('special')} /><Segment text="Zone Map" active={matrixTab === 'zone'} onPress={() => setMatrixTab('zone')} /></View>
       <View style={[s.rowBetween, { paddingHorizontal: 20 }]}><Text style={s.cardTitle}>Agoo, La Union</Text><Badge text="✓ LGU Verified" /></View>
-      {matrixTab === 'zone' ? <View style={s.zoneMapWrap}><MapView style={StyleSheet.absoluteFill} initialRegion={{ ...AGOO, latitudeDelta: .12, longitudeDelta: .1 }} mapType="hybrid" showsTraffic>
+      {matrixTab === 'zone' ? <View style={s.zoneMapWrap}><MapView style={StyleSheet.absoluteFill} mapType={satellite ? 'hybrid' : 'standard'} showsTraffic showsCompass={false} userInterfaceStyle={darkModeActive ? 'dark' : 'light'} customMapStyle={darkModeActive ? DARK_MAP_STYLE : []} pitchEnabled rotateEnabled initialCamera={{ center: AGOO, pitch: tilt ? 50 : 0, heading: tilt ? 8 : 0, altitude: 8500, zoom: 11 }}>
         <MapCircle center={AGOO} radius={4000} fillColor="rgba(7,131,79,.24)" strokeColor="#27C27C" strokeWidth={2} />
         <MapCircle center={AGOO} radius={6500} fillColor="rgba(30,105,232,.12)" strokeColor="#4A9AFF" strokeWidth={2} />
         <Marker coordinate={AGOO} title="Agoo town proper"><View style={s.routeNode}><TricycleIcon color="white" size={21} /></View></Marker>
@@ -780,11 +1019,11 @@ function FareMatrix({ goBack }: { goBack: () => void }) {
   );
 }
 
-function TerminalsScreen({ goBack, directions }: { goBack: () => void; directions: () => void }) {
+function TerminalsScreen({ goBack, directions, satellite, tilt }: { goBack: () => void; directions: () => void; satellite: boolean; tilt: boolean }) {
   return (
     <View style={s.flex}>
       <SafeAreaView style={s.pageTop} edges={['top']}><Header title="Nearby Terminals" back={goBack} /></SafeAreaView>
-      <View style={{ height: 245 }}><AppMap /></View>
+      <View style={{ height: 245 }}><AppMap satellite={satellite} tilt={tilt} traffic /></View>
       <ScrollView style={s.terminalList} contentContainerStyle={{ paddingBottom: 115 }}>
         <View style={s.rowBetween}><Text style={s.eyebrow}>NEARBY TERMINAL</Text><Badge text="Live map" /></View>
         {TERMINALS.slice(0, 1).map(t => <Card key={t.name}>
@@ -797,24 +1036,21 @@ function TerminalsScreen({ goBack, directions }: { goBack: () => void; direction
 }
 
 function HistoryScreen({ rides }: { rides: SavedTrip[] }) {
-  return <Page><Header title="Ride History" right={<IconButton icon={<Search size={20} />} onPress={() => Alert.alert('Search rides', 'Use the destination search on Home to repeat or plan a ride.')} />} />
+  return <Page><Header title="Ride History" right={<IconButton icon={<Search size={20} color={darkModeActive ? C.white : C.ink} />} onPress={() => Alert.alert('Search rides', 'Use the destination search on Home to repeat or plan a ride.')} />} />
     {!rides.length && <Card><View style={s.about}><History color={C.green} size={30} /><Text style={s.cardTitle}>No completed rides yet</Text><Text style={s.caption}>Trips appear here after Arrive is confirmed near your destination.</Text></View></Card>}
-    {rides.map((r, i) => <View key={r.id}><Text style={s.eyebrow}>{i === 0 ? 'LATEST' : 'PREVIOUS'}</Text><Card>
+    {rides.map((r, i) => <View key={r.id} style={s.historyItem}><Text style={s.historyLabel}>{i === 0 ? 'LATEST' : 'PREVIOUS'}</Text><Card>
       <View style={s.row}><View style={s.iconTile}><TricycleIcon /></View><View style={s.grow}><Text style={s.cardTitle}>Current location → {r.destination}</Text><Text style={s.caption}>{new Date(r.completedAt).toLocaleString()} • {r.distanceKm.toFixed(2)} km</Text></View><Text style={s.price}>{peso(r.fare)}</Text></View>
-      <Pressable style={s.repeat} onPress={() => Alert.alert('Repeat ride', `${r.destination} is ready to search from Home.`)}><Repeat2 size={17} /><Text style={s.buttonDark}>Repeat This Ride</Text></Pressable>
-      <View style={s.reportRideRow}>
-        <Pressable style={s.reportRideChip} onPress={() => reportToAgoo('Rude driver', r.destination)}><MessageSquareWarning size={15} color={C.red} /><Text style={s.reportRideText}>Rude driver</Text></Pressable>
-        <Pressable style={s.reportRideChip} onPress={() => reportToAgoo('Overpriced fare', `${r.destination} · official fare ${peso(r.fare)}`)}><Flag size={15} color={C.red} /><Text style={s.reportRideText}>Overpriced</Text></Pressable>
-      </View>
+      {r.feedbackStatus === 'no_problem' && <View style={[s.historyFeedbackBadge, s.historyFeedbackOk]}><Check size={14} color={C.green} /><Text style={s.historyFeedbackOkText}>No problem</Text></View>}
+      {r.feedbackStatus === 'reported' && <View style={[s.historyFeedbackBadge, s.historyFeedbackReported]}><Flag size={14} color={C.red} /><Text style={s.historyFeedbackReportedText}>Reported</Text></View>}
     </Card></View>)}
   </Page>;
 }
 
-function ReportScreen({ goBack, postTrip, trip, noProblem }: { goBack: () => void; postTrip: boolean; trip: SavedTrip | null; noProblem: () => void }) {
+function ReportScreen({ goBack, postTrip, trip, noProblem, markReported, profile }: { goBack: () => void; postTrip: boolean; trip: SavedTrip | null; noProblem: () => void; markReported: () => void; profile: UserProfile }) {
   const [issue, setIssue] = useState('Incorrect Fare');
-  const [general, setGeneral] = useState(false);
   const [details, setDetails] = useState('');
   const [photoUri, setPhotoUri] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
   const choosePhoto = async () => {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) { Alert.alert('Photos permission needed', 'Allow photo access to attach evidence.'); return; }
@@ -827,6 +1063,36 @@ function ReportScreen({ goBack, postTrip, trip, noProblem }: { goBack: () => voi
     const result = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: .8, allowsEditing: true });
     if (!result.canceled) setPhotoUri(result.assets[0].uri);
   };
+  const submitReport = async () => {
+    if (submitting) return;
+    if (!details.trim() && !photoUri) {
+      Alert.alert('Add report information', 'Describe what happened or attach a photo before sending your report.');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      let location: Location.LocationObject | null = null;
+      const permission = await Location.requestForegroundPermissionsAsync();
+      if (permission.status === 'granted') location = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      const record: PendingAdminRecord = { clientId: `report-${Date.now()}`, fields: {
+        issue, details: details.trim(), reporterName: profile.name, reporterEmail: profile.email,
+        destination: trip?.destination ?? 'Current ride in Agoo', distanceKm: trip?.distanceKm.toFixed(2) ?? '', fare: trip ? String(trip.fare) : '',
+        latitude: location ? String(location.coords.latitude) : '', longitude: location ? String(location.coords.longitude) : '',
+      }, ...(photoUri ? { photoUri } : {}) };
+      try {
+        await sendAdminRecord('/api/reports', record);
+        if (postTrip) markReported();
+        Alert.alert('Report submitted', 'Your report was sent to the Tri Fare Agoo admin dashboard.', [{ text: 'Done', onPress: goBack }]);
+      } catch {
+        await queueAdminRecord(PENDING_REPORTS_KEY, record);
+        if (postTrip) markReported();
+        Alert.alert('Report saved', 'The admin server is offline. Your complete report is queued and will sync automatically.', [{ text: 'Done', onPress: goBack }]);
+      }
+      setDetails(''); setPhotoUri(null);
+    } catch {
+      Alert.alert('Could not save report', 'Please try again.');
+    } finally { setSubmitting(false); }
+  };
   return <Page keyboard><Header title="Report / Feedback" back={goBack} />
     {postTrip && <View style={s.arrivalBanner}><View style={s.arrivalCheck}><Check color="white" size={22} /></View><View style={s.grow}><Text style={s.cardTitle}>Trip saved to history</Text><Text style={s.caption}>Was everything okay with your ride?</Text></View></View>}
     {postTrip && trip && <Card>
@@ -836,7 +1102,7 @@ function ReportScreen({ goBack, postTrip, trip, noProblem }: { goBack: () => voi
       <Text style={s.caption}>Final fare recalculated from the driven distance using the Agoo fare rule.</Text>
     </Card>}
     <Text style={s.eyebrow}>WHAT'S THE ISSUE?</Text>
-    <View style={s.wrap}>{['Incorrect Fare', 'Overcharging', 'Rude Driver', 'Wrong Route Info', 'Other'].map(x =>
+    <View style={s.wrap}>{['Incorrect Fare', 'Rude Driver', 'Wrong Route Info', 'Other'].map(x =>
       <Pressable key={x} onPress={() => setIssue(x)} style={[s.issueChip, issue === x && s.issueActive]}><Text style={[s.issueText, issue === x && { color: 'white' }]}>{x}</Text></Pressable>)}</View>
     <Text style={s.eyebrow}>ADD A PHOTO</Text>
     {photoUri ? <View style={s.photoPreviewWrap}><Image source={{ uri: photoUri }} style={s.photoPreview} /><Pressable style={s.removePhoto} onPress={() => setPhotoUri(null)}><X color="white" size={18} /></Pressable></View>
@@ -845,31 +1111,30 @@ function ReportScreen({ goBack, postTrip, trip, noProblem }: { goBack: () => voi
         <Pressable style={s.photoAction} onPress={choosePhoto}><Upload color={C.blue} size={25} /><Text style={s.cardTitle}>Photos</Text></Pressable>
       </View>}
     <Text style={s.eyebrow}>DETAILS</Text>
-    <TextInput multiline value={details} onChangeText={setDetails} placeholder="Describe what happened..." style={s.textarea} />
-    <Card style={s.row}><MapPin color={C.green} size={22} /><View style={s.grow}><Text style={s.cardTitle}>Location auto-tagged</Text><Text style={s.caption}>Poblacion, Agoo, La Union</Text></View><Check color={C.green} /></Card>
-    <Card style={s.rowBetween}><View><Text style={s.cardTitle}>Send as general feedback</Text><Text style={s.caption}>Not tied to fare accuracy</Text></View><Switch value={general} onValueChange={setGeneral} /></Card>
-    <PrimaryButton text="Continue in Agoo Messenger" onPress={() => reportToAgoo(general ? 'General feedback' : issue, trip ? `${trip.destination} · ${trip.distanceKm.toFixed(2)} km · ${peso(trip.fare)}` : 'Current ride in Agoo', details)} />
+    <TextInput multiline value={details} onChangeText={setDetails} placeholder="Describe what happened..." placeholderTextColor={darkModeActive ? '#A5B0A8' : '#718078'} style={s.textarea} />
+    <Pressable style={[s.primaryButton, submitting && { opacity: .6 }]} disabled={submitting} onPress={submitReport}>{submitting ? <ActivityIndicator color="white" /> : <><Flag color="white" size={19} /><Text style={s.buttonWhite}>Report It</Text></>}</Pressable>
     {postTrip && <Pressable style={s.noProblemButton} onPress={noProblem}><Check color={C.green} size={20} /><Text style={s.noProblemText}>No problem with this ride</Text></Pressable>}
   </Page>;
 }
 
-function MoreScreen({ open, profile, logout }: { open: (s: Screen) => void; profile: UserProfile; logout: () => void }) {
-  return <Page><Header title="More" /><View style={s.profile}><Image source={{ uri: profile.photoUri }} style={s.profilePhoto} /><View style={s.grow}><Text style={s.cardTitle}>{profile.name}</Text><Text style={s.caption}>{profile.role} · Agoo, La Union</Text></View></View>
-    <Card><MenuRow icon={<SlidersHorizontal color={C.green} />} title="Fare Matrix" onPress={() => open('matrix')} /><MenuRow icon={<MessageSquareWarning color={C.red} />} title="Report / Feedback" onPress={() => open('report')} /><MenuRow icon={<ShieldCheck color={C.blue} />} title="Safety & emergency" onPress={() => Alert.alert('Safety tools', 'Live-trip sharing is available after starting a ride.')} /><MenuRow icon={<Star color={C.amber} />} title="Rate Tri Fare Agoo" onPress={() => Alert.alert('Thank you', 'App-store rating will be enabled after public release.')} /></Card>
+function ProfileScreen({ open, profile, logout, theme, setTheme }: { open: (s: Screen) => void; profile: UserProfile; logout: () => void; theme: ThemeMode; setTheme: (theme: ThemeMode) => void }) {
+  return <Page><Header title="Profile" /><View style={s.profile}><Image source={{ uri: profile.photoUri }} style={s.profilePhoto} /><View style={s.grow}><Text style={s.cardTitle}>{profile.name}</Text><Text style={s.caption}>{profile.email || 'Add email by creating a new account'}</Text><Text style={s.caption}>{profile.role} · Agoo, La Union</Text></View></View>
+    <Card style={s.appearanceCard}><View style={s.row}><View style={s.appearanceIcon}>{theme === 'dark' ? <Moon color="#7EDCAA" size={22} /> : <Sun color="#E5A51D" size={22} />}</View><View style={s.grow}><Text style={s.cardTitle}>Appearance</Text><Text style={s.caption}>{theme === 'dark' ? 'Dark mode' : 'Light mode'}</Text></View><Switch value={theme === 'dark'} onValueChange={enabled => setTheme(enabled ? 'dark' : 'light')} trackColor={{ false: '#CBD5CE', true: C.green }} /></View></Card>
+    <Card><MenuRow icon={<SlidersHorizontal color={C.green} />} title="Fare Matrix" onPress={() => open('matrix')} /><MenuRow icon={<MessageSquareWarning color={C.red} />} title="Report / Feedback" onPress={() => open('report')} /><MenuRow icon={<ShieldCheck color={C.blue} />} title="Agoo emergency hotlines" onPress={showAgooEmergencyHotlines} /></Card>
     <Pressable style={s.logoutButton} onPress={logout}><Text style={s.logoutText}>Log out</Text></Pressable>
     <View style={s.about}><TricycleIcon size={36} /><Text style={s.brand}>Tri Fare Agoo</Text><Text style={s.caption}>Fair rides. Clear fares. Safer journeys.</Text><Text style={s.version}>Version 1.0.0</Text></View>
   </Page>;
 }
 
-function BottomNav({ active, set }: { active: Tab; set: (t: Tab) => void }) {
+function BottomNav({ active, set, profile, theme }: { active: Tab; set: (t: Tab) => void; profile: UserProfile; theme: ThemeMode }) {
   const items: [Tab, string, React.ReactNode][] = [
-    ['home', 'Home', <Home size={21} />], ['fare', 'Fare', <Calculator size={21} />],
-    ['history', 'History', <History size={21} />], ['more', 'More', <Menu size={21} />],
+    ['home', 'Home', <Home size={22} />], ['fare', 'Rate', <Calculator size={22} />],
+    ['history', 'History', <History size={22} />], ['profile', 'Profile', <Image source={{ uri: profile.photoUri }} style={s.navProfilePhoto} />],
   ];
-  return <View style={s.nav}>{items.map(([key, label, icon]) =>
-    <Pressable key={key} style={[s.navItem, active === key && s.navActive]} onPress={() => set(key)}>
-      {React.cloneElement(icon as React.ReactElement<any>, { color: active === key ? C.white : '#707A73', strokeWidth: active === key ? 2.7 : 2 })}
-    </Pressable>)}</View>;
+  return <BlurView intensity={70} tint={theme === 'dark' ? 'dark' : 'light'} experimentalBlurMethod="dimezisBlurView" style={s.nav}>{items.map(([key, label, icon]) =>
+    <Pressable accessibilityLabel={label} key={key} style={[s.navItem, active === key && s.navActive]} onPress={() => set(key)}>
+      {key === 'profile' ? <View style={[s.navProfileWrap, active === key && s.navProfileActive]}>{icon}</View> : React.cloneElement(icon as React.ReactElement<any>, { color: active === key ? C.white : darkModeActive ? '#C5CEC8' : '#536159', strokeWidth: active === key ? 2.7 : 2 })}
+    </Pressable>)}</BlurView>;
 }
 
 function Page({ children, keyboard }: { children: React.ReactNode; keyboard?: boolean }) {
@@ -877,7 +1142,7 @@ function Page({ children, keyboard }: { children: React.ReactNode; keyboard?: bo
   return <SafeAreaView style={s.page} edges={['top']}>{keyboard ? <KeyboardAvoidingView style={s.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>{content}</KeyboardAvoidingView> : content}</SafeAreaView>;
 }
 function Header({ title, back, right }: { title: string; back?: () => void; right?: React.ReactNode }) {
-  return <View style={s.header}>{back && <IconButton icon={<ArrowLeft size={22} />} onPress={back} />}<Text style={s.headerTitle}>{title}</Text><View style={{ marginLeft: 'auto' }}>{right}</View></View>;
+  return <View style={s.header}>{back && <IconButton icon={<ArrowLeft size={22} color={darkModeActive ? C.white : C.ink} />} onPress={back} />}<Text style={s.headerTitle}>{title}</Text><View style={{ marginLeft: 'auto' }}>{right}</View></View>;
 }
 function Card({ children, style }: { children: React.ReactNode; style?: any }) { return <View style={[s.card, style]}>{children}</View>; }
 function IconButton({ icon, onPress }: { icon: React.ReactNode; onPress?: () => void }) { return <Pressable onPress={onPress} style={s.iconButton}>{icon}</Pressable>; }
@@ -890,11 +1155,12 @@ function Line({ label, value, strong, red }: { label: string; value: string; str
 function Stat({ label, value, green }: { label: string; value: string; green?: boolean }) { return <View style={s.stat}><Text style={s.eyebrow}>{label}</Text><Text style={[s.statValue, green && { color: C.green }]}>{value}</Text></View>; }
 function Segment({ text, active, onPress }: { text: string; active?: boolean; onPress?: () => void }) { return <Pressable onPress={onPress} style={[s.segmentItem, active && s.segmentActive]}><Text style={[s.segmentText, active && { color: C.green }]}>{text}</Text></Pressable>; }
 function MenuRow({ icon, title, onPress }: { icon: React.ReactNode; title: string; onPress?: () => void }) { return <Pressable style={s.menuRow} onPress={onPress}>{icon}<Text style={[s.cardTitle, s.grow]}>{title}</Text><ChevronRight color={C.muted} size={20} /></Pressable>; }
-const s = StyleSheet.create({
+const baseStyles = StyleSheet.create({
   app: { flex: 1, backgroundColor: C.pale }, flex: { flex: 1 }, grow: { flex: 1 }, row: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   authPage: { flex: 1, backgroundColor: '#0D1711', overflow: 'hidden' },
   authGlow: { position: 'absolute', width: 380, height: 380, borderRadius: 190, backgroundColor: '#0B7549', opacity: .28, top: -170, right: -140 },
-  authSafe: { flex: 1, paddingHorizontal: 24, paddingTop: 42, paddingBottom: 22, justifyContent: 'space-between' },
+  authSafe: { flex: 1 },
+  authScroll: { flexGrow: 1, paddingHorizontal: 24, paddingTop: 42, paddingBottom: 22, justifyContent: 'space-between', gap: 24 },
   authKicker: { fontFamily: 'Manrope_800ExtraBold', color: '#62D89B', fontSize: 11, letterSpacing: 2 },
   authTitle: { fontFamily: 'Manrope_800ExtraBold', color: C.white, fontSize: 38, lineHeight: 44, marginTop: 8 },
   authSubtitle: { fontFamily: 'Manrope_500Medium', color: '#9AA99F', fontSize: 13, lineHeight: 20, marginTop: 8, maxWidth: 310 },
@@ -903,6 +1169,8 @@ const s = StyleSheet.create({
   authPhotoImage: { width: '100%', height: '100%', resizeMode: 'cover' },
   authPhotoText: { fontFamily: 'Manrope_700Bold', color: '#8FE2B5', fontSize: 9, marginTop: 3 },
   authInput: { height: 54, borderRadius: 17, backgroundColor: '#303832', color: C.white, paddingHorizontal: 15, fontFamily: 'Manrope_600SemiBold', borderWidth: 1, borderColor: '#414B44' },
+  authPasswordRow: { height: 54, borderRadius: 17, backgroundColor: '#303832', paddingHorizontal: 15, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#414B44' },
+  authPasswordInput: { flex: 1, color: C.white, fontFamily: 'Manrope_600SemiBold' },
   authRoleRow: { flexDirection: 'row', gap: 9 },
   authRole: { flex: 1, height: 44, borderRadius: 15, backgroundColor: '#303832', alignItems: 'center', justifyContent: 'center' },
   authRoleActive: { backgroundColor: C.green },
@@ -920,12 +1188,14 @@ const s = StyleSheet.create({
   searchPlaceholder: { flex: 1, fontFamily: 'Manrope_600SemiBold', color: C.muted }, voice: { backgroundColor: C.mint, borderRadius: 12, padding: 8 },
   chips: { flexDirection: 'row', gap: 10, marginTop: 14 }, pill: { backgroundColor: 'rgba(255,255,255,.95)', borderRadius: 22, paddingHorizontal: 15, height: 42, flexDirection: 'row', gap: 7, alignItems: 'center' },
   pillActive: { backgroundColor: C.green }, pillText: { fontFamily: 'Manrope_700Bold', color: C.ink, fontSize: 13 },
-  mapTools: { position: 'absolute', right: 20, top: 128, gap: 8 }, tool: { width: 40, height: 40, borderRadius: 13, backgroundColor: 'rgba(255,255,255,.96)', alignItems: 'center', justifyContent: 'center' },
+  mapTools: { position: 'absolute', right: 20, top: 104, gap: 8 }, tool: { width: 40, height: 40, borderRadius: 13, backgroundColor: 'rgba(255,255,255,.96)', alignItems: 'center', justifyContent: 'center' },
   mapPin: { width: 38, height: 38, borderRadius: 19, backgroundColor: C.green, alignItems: 'center', justifyContent: 'center', borderWidth: 3, borderColor: 'white' },
   homeSheet: { position: 'absolute', left: 14, right: 14, top: 58, backgroundColor: 'rgba(18,21,18,.97)', borderRadius: 23, borderWidth: 1, borderColor: 'rgba(255,255,255,.12)', padding: 10 },
   homeDiscoverPanel: { position: 'absolute', left: 12, right: 12, top: 50, backgroundColor: 'rgba(18,21,18,.96)', borderRadius: 25, borderWidth: 1, borderColor: 'rgba(255,255,255,.12)', padding: 13, shadowColor: '#000', shadowOpacity: .28, shadowRadius: 18 },
-  homeExploreHeading: { paddingTop: 8, paddingLeft: 2 },
-  homeExploreSheet: { position: 'absolute', left: 12, right: 12, bottom: 88, borderRadius: 29, padding: 17, backgroundColor: 'rgba(20,23,20,.97)', borderWidth: 1, borderColor: 'rgba(255,255,255,.12)', shadowColor: '#000', shadowOpacity: .5, shadowRadius: 24 },
+  homeExploreHeading: { paddingTop: 4 },
+  homeSheetViewport: { ...StyleSheet.absoluteFillObject, bottom: 90, overflow: 'hidden', borderBottomLeftRadius: 30, borderBottomRightRadius: 30 },
+  homeExploreSheet: { position: 'absolute', left: 12, right: 12, bottom: 12, borderRadius: 29, padding: 17, backgroundColor: 'rgba(20,23,20,.97)', borderWidth: 1, borderColor: 'rgba(255,255,255,.12)', shadowColor: '#000', shadowOpacity: .5, shadowRadius: 24 },
+  homeExploreSheetFocused: { paddingTop: 13, paddingBottom: 13 },
   homeDiscoverKicker: { fontFamily: 'Manrope_800ExtraBold', color: '#84B69A', fontSize: 9, letterSpacing: 1.4 },
   homeDiscoverTitle: { fontFamily: 'Manrope_800ExtraBold', color: C.white, fontSize: 20, marginTop: 1, marginBottom: 9 },
   homePlacesRow: { gap: 8, paddingTop: 10, paddingRight: 4 },
@@ -936,8 +1206,8 @@ const s = StyleSheet.create({
   dragHandleArea: { height: 34, marginHorizontal: -8, marginTop: -8, alignItems: 'center', justifyContent: 'center' },
   handle: { width: 52, height: 5, borderRadius: 3, backgroundColor: '#89918B', alignSelf: 'center' },
   locationRow: { flexDirection: 'row', gap: 10, alignItems: 'center' }, locationTitle: { fontFamily: 'Manrope_800ExtraBold', fontSize: 15, color: C.white },
-  homeWhereTo: { height: 60, borderRadius: 19, backgroundColor: '#343936', borderWidth: 1, borderColor: '#464C47', flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, gap: 11, marginTop: 12 },
-  exploreGoButton: { height: 48, borderRadius: 16, backgroundColor: C.green, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9, marginTop: 12, paddingHorizontal: 14 },
+  homeWhereTo: { height: 60, borderRadius: 19, backgroundColor: '#343936', borderWidth: 1, borderColor: '#464C47', flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, gap: 11, marginTop: 14 },
+  exploreGoButton: { height: 48, borderRadius: 16, backgroundColor: C.green, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9, marginTop: 2, paddingHorizontal: 14 },
   homeWhereTitle: { fontFamily: 'Manrope_800ExtraBold', color: C.white, fontSize: 14 },
   homeWhereLocation: { fontFamily: 'Manrope_500Medium', color: '#98A19A', fontSize: 9, marginTop: 2 },
   homeGoCircle: { width: 37, height: 37, borderRadius: 19, backgroundColor: C.blue, alignItems: 'center', justifyContent: 'center' },
@@ -946,8 +1216,11 @@ const s = StyleSheet.create({
   iconTile: { width: 45, height: 45, borderRadius: 14, backgroundColor: C.mint, alignItems: 'center', justifyContent: 'center' },
   quickTitle: { flex: 1, fontFamily: 'Manrope_700Bold', color: C.white, fontSize: 13 },
   swipeHint: { fontFamily: 'Manrope_600SemiBold', color: '#6F7972', fontSize: 9, textAlign: 'center', marginTop: 10 },
-  nav: { position: 'absolute', bottom: 18, left: 36, right: 36, height: 58, flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(18,21,19,.98)', paddingHorizontal: 7, borderWidth: 1, borderColor: '#303530', borderRadius: 29, shadowColor: '#000', shadowOpacity: .38, shadowRadius: 18, shadowOffset: { width: 0, height: 8 }, overflow: 'hidden' },
-  navItem: { flex: 1, alignItems: 'center', justifyContent: 'center', borderRadius: 22, height: 44 }, navActive: { backgroundColor: C.green },
+  nav: { position: 'absolute', bottom: 24, left: 24, right: 24, height: 66, flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,.28)', paddingHorizontal: 7, borderWidth: 1.2, borderColor: 'rgba(255,255,255,.72)', borderRadius: 34, shadowColor: '#071B10', shadowOpacity: .22, shadowRadius: 22, shadowOffset: { width: 0, height: 9 }, overflow: 'hidden' },
+  navItem: { flex: 1, alignItems: 'center', justifyContent: 'center', borderRadius: 27, height: 52 }, navActive: { backgroundColor: C.green },
+  navProfileWrap: { width: 31, height: 31, borderRadius: 16, padding: 2, backgroundColor: 'rgba(255,255,255,.48)' },
+  navProfileActive: { backgroundColor: C.white },
+  navProfilePhoto: { width: '100%', height: '100%', borderRadius: 14, resizeMode: 'cover' },
   navText: { fontFamily: 'Manrope_600SemiBold', fontSize: 10, color: '#707A73' },
   card: { backgroundColor: C.white, borderRadius: 22, padding: 16, gap: 10, shadowColor: '#183226', shadowOpacity: .07, shadowRadius: 16, shadowOffset: { width: 0, height: 6 } },
   cardTitle: { fontFamily: 'Manrope_700Bold', color: C.ink, fontSize: 14 }, bigValue: { fontFamily: 'Manrope_800ExtraBold', color: C.ink, fontSize: 20 },
@@ -970,6 +1243,7 @@ const s = StyleSheet.create({
   dot: { width: 9, height: 9, borderRadius: 5, position: 'absolute', left: 15 }, routeText: { fontFamily: 'Manrope_600SemiBold', marginLeft: 20, color: C.ink, fontSize: 13 },
   routeTopSafe: { position: 'absolute', top: 0, left: 0, right: 0, paddingHorizontal: 16 },
   routeTopRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 8 },
+  routeBackButton: { width: 44, height: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(24,29,25,.9)', borderWidth: 1, borderColor: 'rgba(255,255,255,.18)', shadowColor: '#000', shadowOpacity: .2, shadowRadius: 10 },
   routeSearch: { flex: 1, height: 52, borderRadius: 17, backgroundColor: 'rgba(57,62,59,.98)', flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, gap: 9, borderWidth: 1, borderColor: '#4A504B' },
   routeInput: { flex: 1, fontFamily: 'Manrope_600SemiBold', color: C.white, fontSize: 14 },
   searchResults: { marginTop: 8, marginLeft: 54, maxHeight: 360, borderRadius: 18, overflow: 'hidden', backgroundColor: 'rgba(27,30,28,.99)', shadowColor: '#000', shadowOpacity: .35, shadowRadius: 16, borderWidth: 1, borderColor: '#3A403B' },
@@ -983,10 +1257,15 @@ const s = StyleSheet.create({
   routeCardScroll: { flex: 1 },
   routeCardContent: { paddingBottom: 42 },
   routeNode: { width: 34, height: 34, borderRadius: 17, backgroundColor: C.blue, borderWidth: 3, borderColor: 'white', alignItems: 'center', justifyContent: 'center' },
+  navigationArrowWrap: { width: 68, height: 68, alignItems: 'center', justifyContent: 'center' },
+  navigationArrowPulse: { position: 'absolute', width: 48, height: 48, borderRadius: 24, backgroundColor: '#5BBBEF' },
+  navigationArrow: { width: 42, height: 42, borderRadius: 21, backgroundColor: '#39A9E8', borderWidth: 3, borderColor: C.white, alignItems: 'center', justifyContent: 'center', shadowColor: '#092C40', shadowOpacity: .45, shadowRadius: 7, shadowOffset: { width: 0, height: 4 } },
   pulseWrap: { width: 58, height: 58, alignItems: 'center', justifyContent: 'center' },
   pinPulse: { position: 'absolute', width: 42, height: 42, borderRadius: 21, backgroundColor: '#36A2FF' },
   wazePin: { width: 39, height: 39, borderRadius: 20, backgroundColor: C.blue, borderWidth: 3, borderColor: 'white', alignItems: 'center', justifyContent: 'center', shadowColor: '#36A2FF', shadowOpacity: .9, shadowRadius: 10 },
   pinnedMapIcon: { width: 38, height: 38, borderRadius: 19, backgroundColor: C.blue, borderWidth: 3, borderColor: C.white, alignItems: 'center', justifyContent: 'center', shadowColor: C.blue, shadowOpacity: .8, shadowRadius: 9 },
+  privateLocationMarker: { width: 30, height: 30, borderRadius: 15, backgroundColor: 'rgba(30,105,232,.2)', borderWidth: 2, borderColor: C.white, alignItems: 'center', justifyContent: 'center' },
+  privateLocationDot: { width: 16, height: 16, borderRadius: 8, backgroundColor: C.blue },
   routeMetrics: { flexDirection: 'row', backgroundColor: '#232723', borderRadius: 17, paddingVertical: 12, marginTop: 13 },
   routeChoices: { gap: 8, paddingVertical: 9 },
   routeChoice: { minWidth: 120, borderRadius: 14, paddingHorizontal: 11, paddingVertical: 8, backgroundColor: '#292E2A', borderWidth: 1, borderColor: '#3A413B' },
@@ -1028,9 +1307,13 @@ const s = StyleSheet.create({
   zoneLegendText: { fontFamily: 'Manrope_500Medium', color: '#AAB3AC', fontSize: 10, marginTop: 3 },
   source: { flexDirection: 'row', gap: 10, backgroundColor: C.white, padding: 16, margin: 14, borderRadius: 18 },
   terminalList: { flex: 1, backgroundColor: C.pale, padding: 18 }, repeat: { height: 40, backgroundColor: C.mint, borderRadius: 13, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
-  reportRideRow: { flexDirection: 'row', gap: 8 },
-  reportRideChip: { flex: 1, height: 37, borderRadius: 12, backgroundColor: '#FFF0F0', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
-  reportRideText: { fontFamily: 'Manrope_700Bold', color: C.red, fontSize: 10 },
+  historyItem: { gap: 8 },
+  historyLabel: { fontFamily: 'Manrope_800ExtraBold', color: C.muted, fontSize: 10, letterSpacing: .8, marginTop: 7, paddingLeft: 2 },
+  historyFeedbackBadge: { alignSelf: 'flex-start', height: 30, borderRadius: 10, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 6 },
+  historyFeedbackOk: { backgroundColor: C.mint },
+  historyFeedbackReported: { backgroundColor: '#FFF0F0' },
+  historyFeedbackOkText: { fontFamily: 'Manrope_700Bold', color: C.green, fontSize: 10 },
+  historyFeedbackReportedText: { fontFamily: 'Manrope_700Bold', color: C.red, fontSize: 10 },
   exploreTop: { position: 'absolute', top: 0, left: 0, right: 0, paddingHorizontal: 20, paddingTop: 10, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   exploreKicker: { fontFamily: 'Manrope_800ExtraBold', color: '#9BA49D', fontSize: 10, letterSpacing: 1.5 },
   exploreTitle: { fontFamily: 'Manrope_800ExtraBold', color: C.white, fontSize: 24, marginTop: 2 },
@@ -1047,10 +1330,20 @@ const s = StyleSheet.create({
   placeMeta: { flexDirection: 'row', gap: 6, alignItems: 'center', marginTop: 8 },
   placeMetaText: { fontFamily: 'Manrope_600SemiBold', color: '#7E8A82', fontSize: 10 },
   placeRating: { fontFamily: 'Manrope_700Bold', color: '#E6B934', fontSize: 10, marginLeft: 4 },
-  placeThumb: { width: 84, opacity: .55 }, placeThumbActive: { opacity: 1 },
-  thumbArt: { width: 84, height: 55, borderRadius: 14, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,.1)' },
-  placePhoto: { width: '100%', height: '100%', borderRadius: 13, resizeMode: 'cover' },
-  thumbText: { fontFamily: 'Manrope_600SemiBold', color: C.white, fontSize: 9, marginTop: 5 },
+  destinationCardOuter: { width: 140, height: 190, borderRadius: 18, backgroundColor: '#173D2D' },
+  destinationCardSelected: { borderWidth: 2, borderColor: '#4AD99A' },
+  destinationCard: { flex: 1, borderRadius: 17, overflow: 'hidden' },
+  destinationCardImage: { ...StyleSheet.absoluteFillObject, width: undefined, height: undefined, resizeMode: 'cover' },
+  destinationCardContent: { flex: 1, justifyContent: 'flex-end', padding: 11 },
+  destinationCardGo: { position: 'absolute', top: 10, right: 10, zIndex: 3, width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(8,48,32,.66)', borderWidth: 1, borderColor: 'rgba(255,255,255,.4)' },
+  destinationCardTitle: { fontFamily: 'Manrope_800ExtraBold', color: C.white, fontSize: 14, lineHeight: 17, letterSpacing: -.25 },
+  destinationCardStats: { fontFamily: 'Manrope_600SemiBold', color: 'rgba(255,255,255,.78)', fontSize: 7, marginTop: 3 },
+  focusedExploreRow: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingTop: 4, paddingBottom: 12 },
+  focusedExploreDetails: { flex: 1, minWidth: 0 },
+  focusedExploreBack: { alignSelf: 'flex-start', height: 28, paddingHorizontal: 8, marginBottom: 7, borderRadius: 9, flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(130,145,136,.16)' },
+  focusedExploreBackText: { fontFamily: 'Manrope_700Bold', color: C.white, fontSize: 8 },
+  focusedExploreTitle: { fontFamily: 'Manrope_800ExtraBold', color: C.white, fontSize: 17, lineHeight: 21, marginTop: 3 },
+  focusedExploreDescription: { fontFamily: 'Manrope_500Medium', color: '#AEB6B0', fontSize: 9, lineHeight: 14, marginTop: 6 },
   goButton: { height: 60, borderRadius: 18, backgroundColor: '#EAF3EC', flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, gap: 10 },
   goIcon: { width: 42, height: 42, borderRadius: 13, backgroundColor: '#CBE2D2', alignItems: 'center', justifyContent: 'center' },
   goLabel: { fontFamily: 'Manrope_800ExtraBold', color: '#101310', fontSize: 13 },
@@ -1068,9 +1361,53 @@ const s = StyleSheet.create({
   noProblemText: { fontFamily: 'Manrope_800ExtraBold', color: C.green, fontSize: 13 },
   textarea: { height: 100, backgroundColor: C.white, borderRadius: 20, padding: 15, fontFamily: 'Manrope_400Regular', textAlignVertical: 'top' },
   profile: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 10 },
+  appearanceCard: { paddingVertical: 12 },
+  appearanceIcon: { width: 43, height: 43, borderRadius: 14, backgroundColor: C.mint, alignItems: 'center', justifyContent: 'center' },
   profilePhoto: { width: 58, height: 58, borderRadius: 20, backgroundColor: C.mint },
   logoutButton: { height: 50, borderRadius: 16, borderWidth: 1, borderColor: '#F0CACA', backgroundColor: '#FFF3F3', alignItems: 'center', justifyContent: 'center' },
   logoutText: { fontFamily: 'Manrope_800ExtraBold', color: C.red, fontSize: 12 },
   menuRow: { flexDirection: 'row', alignItems: 'center', gap: 14, minHeight: 54, borderBottomWidth: 1, borderColor: C.line },
   about: { alignItems: 'center', padding: 30, gap: 4 }, brand: { fontFamily: 'Manrope_800ExtraBold', color: C.green, fontSize: 22 }, version: { fontFamily: 'Manrope_500Medium', color: '#A0AAA4', fontSize: 10, marginTop: 8 },
 });
+
+const lightThemeStyles: Partial<Record<keyof typeof baseStyles, any>> = StyleSheet.create({
+  app: { backgroundColor: '#F7F9F7' },
+  routeBackButton: { backgroundColor: C.white, borderColor: '#E1E7E3', shadowColor: '#10291D', shadowOpacity: .12 },
+  homeExploreSheet: { backgroundColor: 'rgba(255,255,255,.98)', borderColor: '#DDE6E0' },
+  placeTitle: { color: C.ink }, placeDescription: { color: '#59675F' }, placeCategory: { color: C.green },
+  focusedExploreTitle: { color: C.ink }, focusedExploreDescription: { color: '#59675F' }, focusedExploreBackText: { color: C.ink },
+  homeWhereTo: { backgroundColor: '#F0F4F1', borderColor: '#D9E2DC' }, homeWhereTitle: { color: C.ink },
+  quick: { backgroundColor: '#F0F4F1', borderColor: '#D9E2DC' }, quickTitle: { color: C.ink },
+  panoRouteCard: { backgroundColor: 'rgba(255,255,255,.98)', borderColor: '#DDE6E0' },
+  matrixFareBox: { backgroundColor: '#F0F4F1', borderColor: '#D9E2DC' }, matrixFareTitle: { color: C.ink }, matrixValue: { color: C.ink },
+  routeMetrics: { backgroundColor: '#F0F4F1' }, routeSearch: { backgroundColor: 'rgba(255,255,255,.98)', borderColor: '#D9E2DC' }, routeInput: { color: C.ink },
+  searchResults: { backgroundColor: 'rgba(255,255,255,.99)', borderColor: '#D9E2DC' }, searchResult: { borderColor: '#E4EAE6' }, searchResultTitle: { color: C.ink }, searchResultCaption: { color: C.muted },
+  darkCircleSmall: { backgroundColor: C.green, borderColor: '#0A7048' },
+  nav: { backgroundColor: 'rgba(255,255,255,.25)', borderColor: 'rgba(255,255,255,.76)' },
+});
+
+const darkThemeStyles: Partial<Record<keyof typeof baseStyles, any>> = StyleSheet.create({
+  app: { backgroundColor: '#0F1310' }, page: { backgroundColor: '#0F1310' }, pageTop: { backgroundColor: '#0F1310' }, terminalList: { backgroundColor: '#0F1310' },
+  card: { backgroundColor: '#1C211D' }, iconButton: { backgroundColor: '#242A25' },
+  tool: { backgroundColor: 'rgba(29,35,30,.96)', borderWidth: 1, borderColor: '#465048' },
+  headerTitle: { color: '#F4F7F5' }, cardTitle: { color: '#F1F5F2' }, bigValue: { color: '#F1F5F2' }, bold: { color: '#F1F5F2' },
+  caption: { color: '#A5B0A8' }, eyebrow: { color: '#91A097' }, lineLabel: { color: '#A5B0A8' }, lineValue: { color: '#F1F5F2' },
+  nav: { backgroundColor: 'rgba(15,20,16,.38)', borderColor: 'rgba(255,255,255,.2)' },
+  profile: { backgroundColor: '#0F1310' }, appearanceIcon: { backgroundColor: '#26362C' },
+  input: { color: '#F1F5F2' }, inlineSearch: { backgroundColor: '#1C211D' }, textarea: { backgroundColor: '#1C211D', color: '#F1F5F2' },
+  issueChip: { backgroundColor: '#1C211D' }, issueText: { color: '#F1F5F2' }, photoAction: { backgroundColor: '#182A20', borderColor: '#315440' },
+  arrivalBanner: { backgroundColor: '#182A20' }, noProblemButton: { backgroundColor: '#182A20', borderColor: '#315440' },
+  segment: { backgroundColor: '#182A20' }, segmentActive: { backgroundColor: '#29322C' }, tableHeader: { backgroundColor: '#182A20' }, tableRow: { backgroundColor: '#1C211D', borderColor: '#303832' },
+  tableName: { color: '#F1F5F2' }, tableCell: { color: '#A5B0A8' }, tablePrice: { color: '#F1F5F2' }, source: { backgroundColor: '#1C211D' },
+  breakdown: { backgroundColor: '#182A20', borderColor: '#315440' }, estimate: { backgroundColor: '#182A20' }, rideCard: { backgroundColor: '#1C211D' },
+  statsCard: { backgroundColor: 'rgba(28,33,29,.97)' }, statValue: { color: '#F1F5F2' }, rideSheet: { backgroundColor: '#151A16' }, liveShare: { backgroundColor: '#182A20' }, progressTrack: { backgroundColor: '#364039' },
+  specialRow: { backgroundColor: '#202722', borderWidth: 1, borderColor: '#38433B' }, pinLocationButton: { backgroundColor: 'rgba(29,35,30,.97)', borderWidth: 1, borderColor: '#465048' }, logoutButton: { backgroundColor: '#2B1B1C', borderColor: '#5A3032' }, menuRow: { borderColor: '#303832' },
+});
+
+const s = new Proxy(baseStyles, {
+  get(target, property: string) {
+    const key = property as keyof typeof baseStyles;
+    const override = (darkModeActive ? darkThemeStyles : lightThemeStyles)[key];
+    return override ? [target[key], override] : target[key];
+  },
+}) as typeof baseStyles;
