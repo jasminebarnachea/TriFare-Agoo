@@ -75,7 +75,7 @@ export const TOURIST_SPOTS: TouristSpot[] = [
     category: 'Heritage · Pilgrimage',
     description: 'Agoo’s historic Basilica of Our Lady of Charity, founded in 1578.',
     distance: '0.1 km from Municipal Hall',
-    latitude: 16.3223, longitude: 120.3671,
+    latitude: 16.32313, longitude: 120.36738,
     query: 'Basilica Minore of Our Lady of Charity, Agoo, La Union',
   },
   {
@@ -83,7 +83,7 @@ export const TOURIST_SPOTS: TouristSpot[] = [
     category: 'Museum · Culture',
     description: 'An American colonial-era museum preserving Ilokano artifacts and local history.',
     distance: '0.1 km from Municipal Hall',
-    latitude: 16.3217, longitude: 120.3675,
+    latitude: 16.32331, longitude: 120.36675,
     query: 'Museo de Iloko, Agoo, La Union',
   },
   {
@@ -109,13 +109,5 @@ export const TOURIST_SPOTS: TouristSpot[] = [
     distance: '5.7 km from Municipal Hall',
     latitude: 16.3274, longitude: 120.3336,
     query: 'Agoo Eco-Fun World, Agoo, La Union',
-  },
-  {
-    name: 'Agoo–Damortis Coast',
-    category: 'Coast · Protected landscape',
-    description: 'Mangroves, seagrass beds, and black-sand coastline along Lingayen Gulf.',
-    distance: '5.2 km from Municipal Hall',
-    latitude: 16.3184, longitude: 120.3268,
-    query: 'Agoo Damortis Protected Landscape and Seascape, La Union',
   },
 ];

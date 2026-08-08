@@ -76,7 +76,6 @@ const TOURIST_FARE_DESTINATIONS: FareEntry[] = [
   { barangay: 'Our Lady of Lourdes Grotto', distance: '1.1', regular: 20, special: 16 },
   { barangay: 'Agoo Eco Park (Sta. Rita)', distance: '5.5', regular: 23, special: 18 },
   { barangay: 'Agoo Eco-Fun World', distance: '5.5', regular: 23, special: 18 },
-  { barangay: 'Agoo–Damortis Protected Coast', distance: '5.1', regular: 22, special: 18 },
   { barangay: 'Agoo Plaza', distance: '0.3', regular: 20, special: 16 },
   { barangay: 'Agoo Municipal Hall', distance: '0.2', regular: 20, special: 16 },
 ];
@@ -86,10 +85,9 @@ const VERIFIED_PLACE_PHOTOS: Record<string, number> = {
   'Basilica Minore': require('./assets/places/basilica.jpg'),
   'Museo de Iloko': require('./assets/places/museo.jpg'),
   'Eagle of the North': require('./assets/places/eagle.jpg'),
-  'Agoo–Damortis Coast': require('./assets/places/coast.jpg'),
 };
 const EXPLORE_PLACES = TOURIST_SPOTS.filter(spot => VERIFIED_PLACE_PHOTOS[spot.name]);
-const HOME_MAP_SPOTS = TOURIST_SPOTS.filter(spot => !['Agoo Eco-Fun World', 'Agoo–Damortis Coast'].includes(spot.name));
+const HOME_MAP_SPOTS = TOURIST_SPOTS.filter(spot => spot.name !== 'Agoo Eco-Fun World');
 type UserProfile = {
   name: string;
   email: string;
@@ -686,7 +684,6 @@ function RouteScreen({ goBack, start, initialDestination, satellite, tilt, priva
   const destinationName = customName || selected.barangay;
   const matrixSource = customPoint ? 'Distance-based ordinance calculation'
     : selected.barangay.includes('Eco') ? 'Sta. Rita Central fare entry'
-    : selected.barangay.includes('Damortis') ? 'Sta. Rita West fare entry'
     : selected.barangay.includes('Basilica') || selected.barangay.includes('Museo') || selected.barangay.includes('Plaza') || selected.barangay.includes('Municipal')
       ? 'Town proper / first 4 km base fare' : `${selected.barangay} fare entry`;
   useEffect(() => {
