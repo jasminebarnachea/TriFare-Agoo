@@ -1,7 +1,6 @@
-import { promises as fs } from 'node:fs';
-import path from 'node:path';
 import { NextResponse } from 'next/server';
-import { readReports, saveReport, type ReportRecord } from '../../../lib/reports';
+import { readReports, saveReport, type ReportWrite } from '../../../lib/reports';
+import { uploadPrivatePhoto } from '../../../lib/supabase';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -17,19 +16,14 @@ export async function POST(request: Request) {
   if (!issue || (!details && !(photo instanceof File && photo.size))) {
     return NextResponse.json({ error: 'An issue and either report details or a photo are required.' }, { status: 400 });
   }
-  let photoUrl: string | null = null;
+  let photoPath: string | null = null;
   if (photo instanceof File && photo.size) {
-    const extension = photo.type === 'image/png' ? 'png' : 'jpg';
-    const filename = `${Date.now()}-${crypto.randomUUID()}.${extension}`;
-    const uploadDirectory = path.join(process.cwd(), 'public', 'uploads');
-    await fs.mkdir(uploadDirectory, { recursive: true });
-    await fs.writeFile(path.join(uploadDirectory, filename), Buffer.from(await photo.arrayBuffer()));
-    photoUrl = `/uploads/${filename}`;
+    photoPath = await uploadPrivatePhoto('reports', photo);
   }
-  const report: ReportRecord = {
+  const report: ReportWrite = {
     id: value('clientId') || crypto.randomUUID(), createdAt: new Date().toISOString(), issue, details,
     reporterName: value('reporterName'), reporterEmail: value('reporterEmail'), destination: value('destination'),
-    distanceKm: value('distanceKm'), fare: value('fare'), latitude: value('latitude'), longitude: value('longitude'), photoUrl,
+    distanceKm: value('distanceKm'), fare: value('fare'), latitude: value('latitude'), longitude: value('longitude'), photoPath,
   };
   await saveReport(report);
   return NextResponse.json(report, { status: 201 });

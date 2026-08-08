@@ -1,23 +1,44 @@
-import { promises as fs } from 'node:fs';
-import path from 'node:path';
+import { getSupabaseAdmin, signedPhotoUrl } from './supabase';
 
 export type ReportRecord = {
   id: string; createdAt: string; issue: string; details: string; reporterName: string; reporterEmail: string;
   destination: string; distanceKm: string; fare: string; latitude: string; longitude: string; photoUrl: string | null;
 };
-
-const dataDirectory = path.join(process.cwd(), 'data');
-const reportsFile = path.join(dataDirectory, 'reports.json');
+export type ReportWrite = Omit<ReportRecord, 'photoUrl'> & { photoPath: string | null };
 
 export async function readReports(): Promise<ReportRecord[]> {
-  try { return JSON.parse(await fs.readFile(reportsFile, 'utf8')) as ReportRecord[]; }
-  catch { return []; }
+  const { data, error } = await getSupabaseAdmin().from('reports').select('*').order('created_at', { ascending: false });
+  if (error) throw error;
+  return Promise.all((data ?? []).map(async row => ({
+    id: row.id,
+    createdAt: row.created_at,
+    issue: row.issue,
+    details: row.details,
+    reporterName: row.reporter_name,
+    reporterEmail: row.reporter_email,
+    destination: row.destination,
+    distanceKm: row.distance_km,
+    fare: row.fare,
+    latitude: row.latitude,
+    longitude: row.longitude,
+    photoUrl: await signedPhotoUrl(row.photo_path),
+  })));
 }
 
-export async function saveReport(report: ReportRecord) {
-  await fs.mkdir(dataDirectory, { recursive: true });
-  const reports = await readReports();
-  if (reports.some(item => item.id === report.id)) return;
-  reports.unshift(report);
-  await fs.writeFile(reportsFile, JSON.stringify(reports, null, 2));
+export async function saveReport(report: ReportWrite) {
+  const { error } = await getSupabaseAdmin().from('reports').upsert({
+    id: report.id,
+    created_at: report.createdAt,
+    issue: report.issue,
+    details: report.details,
+    reporter_name: report.reporterName,
+    reporter_email: report.reporterEmail,
+    destination: report.destination,
+    distance_km: report.distanceKm,
+    fare: report.fare,
+    latitude: report.latitude,
+    longitude: report.longitude,
+    photo_path: report.photoPath,
+  }, { onConflict: 'id', ignoreDuplicates: true });
+  if (error) throw error;
 }
