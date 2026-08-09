@@ -6,53 +6,51 @@ export type RouteResult = {
   alternatives?: RouteResult[];
 };
 
-export function decodeGooglePolyline(encoded: string): RoutePoint[] {
-  const points: RoutePoint[] = [];
-  let index = 0, latitude = 0, longitude = 0;
-  while (index < encoded.length) {
-    let result = 0, shift = 0, byte: number;
-    do { byte = encoded.charCodeAt(index++) - 63; result |= (byte & 0x1f) << shift; shift += 5; } while (byte >= 0x20);
-    latitude += (result & 1) ? ~(result >> 1) : (result >> 1);
-    result = 0; shift = 0;
-    do { byte = encoded.charCodeAt(index++) - 63; result |= (byte & 0x1f) << shift; shift += 5; } while (byte >= 0x20);
-    longitude += (result & 1) ? ~(result >> 1) : (result >> 1);
-    points.push({ latitude: latitude / 1e5, longitude: longitude / 1e5 });
-  }
-  return points;
+const ORS_URL = 'https://api.openrouteservice.org';
+
+async function geocodeDestination(destination: string, apiKey: string): Promise<RoutePoint | null> {
+  const params = new URLSearchParams({
+    api_key: apiKey,
+    text: destination,
+    size: '1',
+    'boundary.circle.lat': '16.3221',
+    'boundary.circle.lon': '120.3678',
+    'boundary.circle.radius': '12',
+  });
+  const response = await fetch(`${ORS_URL}/geocode/search?${params}`);
+  if (!response.ok) throw new Error(`openrouteservice geocoding returned ${response.status}`);
+  const feature = (await response.json()).features?.[0];
+  if (!feature?.geometry?.coordinates) return null;
+  return { latitude: feature.geometry.coordinates[1], longitude: feature.geometry.coordinates[0] };
 }
 
-export async function computeGoogleRoute(
-  origin: RoutePoint,
-  destination: string | RoutePoint,
-): Promise<RouteResult | null> {
-  const apiKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
+export async function computeRoute(origin: RoutePoint, destination: string | RoutePoint): Promise<RouteResult | null> {
+  const apiKey = process.env.EXPO_PUBLIC_OPENROUTESERVICE_API_KEY;
   if (!apiKey) return null;
-  const response = await fetch('https://routes.googleapis.com/directions/v2:computeRoutes', {
+  const destinationPoint = typeof destination === 'string'
+    ? await geocodeDestination(destination, apiKey)
+    : destination;
+  if (!destinationPoint) return null;
+
+  const response = await fetch(`${ORS_URL}/v2/directions/driving-car/geojson`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Goog-Api-Key': apiKey,
-      'X-Goog-FieldMask': 'routes.distanceMeters,routes.duration,routes.polyline.encodedPolyline',
-    },
+    headers: { Authorization: apiKey, 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      origin: { location: { latLng: { latitude: origin.latitude, longitude: origin.longitude } } },
-      destination: typeof destination === 'string'
-        ? { address: destination }
-        : { location: { latLng: destination } },
-      travelMode: 'DRIVE',
-      routingPreference: 'TRAFFIC_AWARE',
-      computeAlternativeRoutes: true,
-      languageCode: 'en-US',
-      units: 'METRIC',
+      coordinates: [
+        [origin.longitude, origin.latitude],
+        [destinationPoint.longitude, destinationPoint.latitude],
+      ],
+      instructions: false,
+      preference: 'recommended',
     }),
   });
-  if (!response.ok) throw new Error(`Google Routes returned ${response.status}`);
+  if (!response.ok) throw new Error(`openrouteservice directions returned ${response.status}`);
   const data = await response.json();
-  const parsed: RouteResult[] = (data.routes ?? []).map((route: any) => ({
-    points: decodeGooglePolyline(route.polyline.encodedPolyline),
-    distanceKm: route.distanceMeters / 1000,
-    durationMinutes: Math.max(1, Math.round(Number(String(route.duration).replace('s', '')) / 60)),
-  }));
+  const parsed: RouteResult[] = (data.features ?? []).map((feature: any) => ({
+    points: (feature.geometry?.coordinates ?? []).map(([longitude, latitude]: number[]) => ({ latitude, longitude })),
+    distanceKm: Number(feature.properties?.summary?.distance ?? 0) / 1000,
+    durationMinutes: Math.max(1, Math.round(Number(feature.properties?.summary?.duration ?? 0) / 60)),
+  })).filter((route: RouteResult) => route.points.length > 1);
   if (!parsed.length) return null;
   return { ...parsed[0], alternatives: parsed.slice(1) };
 }

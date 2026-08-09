@@ -8,46 +8,34 @@ export type AgooPlace = {
   location: RoutePoint;
   rating?: number;
   reviewCount?: number;
-  photoUrl?: string;
 };
 
 export async function searchAgooPlaces(query: string): Promise<AgooPlace[]> {
-  const apiKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
+  const apiKey = process.env.EXPO_PUBLIC_OPENROUTESERVICE_API_KEY;
   if (!apiKey || query.trim().length < 2) return [];
   const normalized = query.trim().toLowerCase();
-  const cacheKey = `tri-fare-agoo:places:${normalized}`;
+  const cacheKey = `tri-fare-agoo:ors-places:${normalized}`;
   const cached = await AsyncStorage.getItem(cacheKey).catch(() => null);
-  const response = await fetch('https://places.googleapis.com/v1/places:searchText', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Goog-Api-Key': apiKey,
-      'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.location,places.rating,places.userRatingCount,places.photos',
-    },
-    body: JSON.stringify({
-      textQuery: `${query.trim()} in Agoo, La Union, Philippines`,
-      pageSize: 20,
-      locationBias: {
-        circle: {
-          center: { latitude: 16.3221, longitude: 120.3678 },
-          radius: 9000,
-        },
-      },
-    }),
+  const params = new URLSearchParams({
+    api_key: apiKey,
+    text: `${query.trim()}, Agoo, La Union, Philippines`,
+    size: '20',
+    'boundary.circle.lat': '16.3221',
+    'boundary.circle.lon': '120.3678',
+    'boundary.circle.radius': '12',
   });
+  const response = await fetch(`https://api.openrouteservice.org/geocode/search?${params}`);
   if (!response.ok) return cached ? JSON.parse(cached) : [];
   const data = await response.json();
-  const results = (data.places ?? []).map((place: any) => ({
-    id: place.id,
-    name: place.displayName?.text ?? 'Agoo destination',
-    address: place.formattedAddress ?? 'Agoo, La Union',
-    location: place.location,
-    rating: place.rating,
-    reviewCount: place.userRatingCount,
-    photoUrl: place.photos?.[0]?.name
-      ? `https://places.googleapis.com/v1/${place.photos[0].name}/media?maxHeightPx=500&maxWidthPx=700&key=${apiKey}`
-      : undefined,
-  }));
+  const results: AgooPlace[] = (data.features ?? []).map((feature: any, index: number) => ({
+    id: feature.properties?.id ?? feature.properties?.gid ?? `${normalized}-${index}`,
+    name: feature.properties?.name ?? feature.properties?.label?.split(',')[0] ?? 'Agoo destination',
+    address: feature.properties?.label ?? 'Agoo, La Union',
+    location: {
+      latitude: feature.geometry.coordinates[1],
+      longitude: feature.geometry.coordinates[0],
+    },
+  })).filter((place: AgooPlace) => Number.isFinite(place.location.latitude) && Number.isFinite(place.location.longitude));
   if (results.length) await AsyncStorage.setItem(cacheKey, JSON.stringify(results)).catch(() => {});
   return results;
 }

@@ -40,7 +40,7 @@ import {
   Manrope_700Bold, Manrope_800ExtraBold, useFonts,
 } from '@expo-google-fonts/manrope';
 import { FARES, FareEntry, TERMINALS, TOURIST_SPOTS, TouristSpot } from './src/data/fares';
-import { computeGoogleRoute, RoutePoint, RouteResult } from './src/services/routing';
+import { computeRoute, RoutePoint, RouteResult } from './src/services/routing';
 import { AgooPlace, searchAgooPlaces } from './src/services/places';
 
 const C = {
@@ -74,8 +74,8 @@ const TOURIST_FARE_DESTINATIONS: FareEntry[] = [
   { barangay: 'Museo de Iloko', distance: '0.2', regular: 20, special: 16 },
   { barangay: 'Eagle of the North Park', distance: '0.9', regular: 20, special: 16 },
   { barangay: 'Our Lady of Lourdes Grotto', distance: '1.1', regular: 20, special: 16 },
-  { barangay: 'Agoo Eco Park (Sta. Rita)', distance: '5.5', regular: 23, special: 18 },
   { barangay: 'Agoo Eco-Fun World', distance: '5.5', regular: 23, special: 18 },
+  { barangay: 'Agoo Eco Park (Sta. Rita)', distance: '5.5', regular: 23, special: 18 },
   { barangay: 'Agoo Plaza', distance: '0.3', regular: 20, special: 16 },
   { barangay: 'Agoo Municipal Hall', distance: '0.2', regular: 20, special: 16 },
 ];
@@ -88,6 +88,18 @@ const VERIFIED_PLACE_PHOTOS: Record<string, number> = {
 };
 const EXPLORE_PLACES = TOURIST_SPOTS.filter(spot => VERIFIED_PLACE_PHOTOS[spot.name]);
 const HOME_MAP_SPOTS = TOURIST_SPOTS.filter(spot => spot.name !== 'Agoo Eco-Fun World');
+function exactTouristPoint(destinationName: string): RoutePoint | null {
+  const normalized = destinationName.toLowerCase();
+  const spot = TOURIST_SPOTS.find(item => {
+    const name = item.name.toLowerCase();
+    return normalized.includes(name)
+      || (name.includes('basilica') && normalized.includes('basilica'))
+      || (name.includes('eagle') && normalized.includes('eagle'))
+      || (name.includes('lourdes') && normalized.includes('lourdes'))
+      || (name.includes('eco-fun') && normalized.includes('eco-fun'));
+  });
+  return spot ? { latitude: spot.latitude, longitude: spot.longitude } : null;
+}
 type UserProfile = {
   name: string;
   email: string;
@@ -590,7 +602,7 @@ function HomeScreen({ open, chooseSpot, satellite, setSatellite, tilt, setTilt, 
     setHomeRoute([]);
     try {
       const visibleOrigin = privacyMode ? AGOO : origin;
-      const result = await computeGoogleRoute(visibleOrigin, destination);
+      const result = await computeRoute(visibleOrigin, destination);
       if (!result?.points.length) throw new Error('No route returned');
       setHomeRoute(result.points);
     } catch {
@@ -610,6 +622,7 @@ function HomeScreen({ open, chooseSpot, satellite, setSatellite, tilt, setTilt, 
       <SafeAreaView style={s.homeOverlay} edges={['top']}>
         <View style={s.homeExploreHeading}>
           <Text style={s.exploreKicker}>DISCOVER AGOO</Text>
+          <Text style={s.mapAttribution}>Routes © openrouteservice · Data © OpenStreetMap contributors</Text>
         </View>
         <View style={s.mapTools}>
           <Tool icon={<Layers3 size={20} color={darkModeActive ? C.white : C.ink} />} onPress={() => setSatellite(x => !x)} />
@@ -719,14 +732,14 @@ function RouteScreen({ goBack, start, initialDestination, satellite, tilt, priva
       } else {
         setOrigin(AGOO);
       }
-      const route = await computeGoogleRoute(startPoint, `${entry.barangay}, Agoo, La Union, Philippines`);
+      const route = await computeRoute(startPoint, exactTouristPoint(entry.barangay) ?? `${entry.barangay}, Agoo, La Union, Philippines`);
       setResult(route);
       if (route?.points.length) {
         map.current?.fitToCoordinates(route.points, { edgePadding: { top: 130, right: 55, bottom: 340, left: 55 }, animated: true });
         tiltMapCamera(map.current, tilt ? 50 : 0, 800);
       }
     } catch {
-      Alert.alert('Could not load the road route', 'Check the Google Routes API key or open this trip in Google Maps.');
+      Alert.alert('Could not load the road route', 'Check the openrouteservice key and your internet connection, then try again.');
     } finally { setLoading(false); }
   };
   const loadPointRoute = async (point: RoutePoint, name: string) => {
@@ -742,7 +755,7 @@ function RouteScreen({ goBack, start, initialDestination, satellite, tilt, priva
       } else {
         setOrigin(AGOO);
       }
-      const route = await computeGoogleRoute(startPoint, point); setResult(route);
+      const route = await computeRoute(startPoint, point); setResult(route);
       if (route?.points.length) {
         map.current?.fitToCoordinates(route.points, { edgePadding: { top: 130, right: 55, bottom: 360, left: 55 }, animated: true });
         tiltMapCamera(map.current, tilt ? 50 : 0, 800);
@@ -753,7 +766,7 @@ function RouteScreen({ goBack, start, initialDestination, satellite, tilt, priva
   useEffect(() => { if (initialDestination) loadRoute(initialDestination); }, []);
   const beginTrip = () => {
     if (!result?.points.length) {
-      Alert.alert('Road route required', 'Add the Google Routes API key, then reload this destination before starting GPS tracking.');
+      Alert.alert('Road route required', 'Add the openrouteservice key, then reload this destination before starting GPS tracking.');
       return;
     }
     start({
@@ -802,6 +815,7 @@ function RouteScreen({ goBack, start, initialDestination, satellite, tilt, priva
               <MapPin size={18} color="#39C4F3" /><View style={s.grow}><Text style={s.searchResultTitle}>{place.name}</Text><Text numberOfLines={1} style={s.searchResultCaption}>{place.address}</Text></View><ChevronRight size={18} color="#A5ADA7" />
             </Pressable>)}</ScrollView>}
       </SafeAreaView>
+      <View pointerEvents="none" style={s.routeAttribution}><Text style={s.mapAttribution}>Routes © openrouteservice · Data © OpenStreetMap contributors</Text></View>
       <Pressable accessibilityLabel={pinMode ? 'Cancel pin location' : 'Pin location'} style={[s.pinLocationButton, pinMode && s.pinLocationButtonActive]} onPress={() => setPinMode(value => !value)}>
         <MapPinned size={21} color={pinMode || darkModeActive ? C.white : C.ink} />
       </Pressable>
@@ -908,6 +922,7 @@ function RideScreen({ trip, complete, satellite, tilt, privacyMode }: { trip: Tr
         </Marker.Animated>
         <Marker coordinate={trip.destinationPoint} title={trip.destination}><View style={s.destinationMarker}><Flag color="white" size={18} fill="white" /></View></Marker>
       </MapView>
+      <View pointerEvents="none" style={s.rideAttribution}><Text style={s.mapAttribution}>Routes © openrouteservice · Data © OpenStreetMap contributors</Text></View>
       <SafeAreaView style={s.rideStats} edges={['top']}>
         <View style={s.statsCard}>
           <Stat label="TRIP TIME" value={`${remainingMinutes} min`} green /><Stat label="DRIVEN KM" value={`${(trackedMetres / 1000).toFixed(2)} km`} green /><Stat label="LIVE FARE" value={peso(trip.fare)} green />
@@ -1190,6 +1205,9 @@ const baseStyles = StyleSheet.create({
   homeSheet: { position: 'absolute', left: 14, right: 14, top: 58, backgroundColor: 'rgba(18,21,18,.97)', borderRadius: 23, borderWidth: 1, borderColor: 'rgba(255,255,255,.12)', padding: 10 },
   homeDiscoverPanel: { position: 'absolute', left: 12, right: 12, top: 50, backgroundColor: 'rgba(18,21,18,.96)', borderRadius: 25, borderWidth: 1, borderColor: 'rgba(255,255,255,.12)', padding: 13, shadowColor: '#000', shadowOpacity: .28, shadowRadius: 18 },
   homeExploreHeading: { paddingTop: 4 },
+  mapAttribution: { fontFamily: 'Manrope_600SemiBold', color: '#67726B', fontSize: 7, marginTop: 3 },
+  routeAttribution: { position: 'absolute', top: 112, left: 18, paddingHorizontal: 7, paddingVertical: 4, borderRadius: 8, backgroundColor: 'rgba(255,255,255,.82)' },
+  rideAttribution: { position: 'absolute', top: 146, left: 18, paddingHorizontal: 7, paddingVertical: 4, borderRadius: 8, backgroundColor: 'rgba(255,255,255,.82)' },
   homeSheetViewport: { ...StyleSheet.absoluteFillObject, bottom: 90, overflow: 'hidden', borderBottomLeftRadius: 30, borderBottomRightRadius: 30 },
   homeExploreSheet: { position: 'absolute', left: 12, right: 12, bottom: 12, borderRadius: 29, padding: 17, backgroundColor: 'rgba(20,23,20,.97)', borderWidth: 1, borderColor: 'rgba(255,255,255,.12)', shadowColor: '#000', shadowOpacity: .5, shadowRadius: 24 },
   homeExploreSheetFocused: { paddingTop: 13, paddingBottom: 13 },
