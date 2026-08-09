@@ -7,6 +7,13 @@ export type RouteResult = {
 };
 
 const ORS_URL = 'https://api.openrouteservice.org';
+const TRICYCLE_CRUISING_KPH = 22;
+
+function tricycleDurationMinutes(distanceKm: number, roadDurationSeconds: number) {
+  const roadMinutes = roadDurationSeconds / 60;
+  const localTricycleMinutes = distanceKm / TRICYCLE_CRUISING_KPH * 60;
+  return Math.max(1, Math.ceil(Math.max(roadMinutes, localTricycleMinutes)));
+}
 
 async function geocodeDestination(destination: string, apiKey: string): Promise<RoutePoint | null> {
   const params = new URLSearchParams({
@@ -46,11 +53,15 @@ export async function computeRoute(origin: RoutePoint, destination: string | Rou
   });
   if (!response.ok) throw new Error(`openrouteservice directions returned ${response.status}`);
   const data = await response.json();
-  const parsed: RouteResult[] = (data.features ?? []).map((feature: any) => ({
-    points: (feature.geometry?.coordinates ?? []).map(([longitude, latitude]: number[]) => ({ latitude, longitude })),
-    distanceKm: Number(feature.properties?.summary?.distance ?? 0) / 1000,
-    durationMinutes: Math.max(1, Math.round(Number(feature.properties?.summary?.duration ?? 0) / 60)),
-  })).filter((route: RouteResult) => route.points.length > 1);
+  const parsed: RouteResult[] = (data.features ?? []).map((feature: any) => {
+    const distanceKm = Number(feature.properties?.summary?.distance ?? 0) / 1000;
+    const roadDurationSeconds = Number(feature.properties?.summary?.duration ?? 0);
+    return {
+      points: (feature.geometry?.coordinates ?? []).map(([longitude, latitude]: number[]) => ({ latitude, longitude })),
+      distanceKm,
+      durationMinutes: tricycleDurationMinutes(distanceKm, roadDurationSeconds),
+    };
+  }).filter((route: RouteResult) => route.points.length > 1);
   if (!parsed.length) return null;
   return { ...parsed[0], alternatives: parsed.slice(1) };
 }

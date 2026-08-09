@@ -911,6 +911,7 @@ function RideScreen({ trip, complete, satellite, tilt, privacyMode }: { trip: Tr
   const map = useRef<MapView>(null);
   const [current, setCurrent] = useState<RoutePoint>(trip.origin);
   const [trackedMetres, setTrackedMetres] = useState(0);
+  const [movingSpeedKph, setMovingSpeedKph] = useState(22);
   const previousPoint = useRef<RoutePoint>(trip.origin);
   const animatedPosition = useRef(new AnimatedRegion({
     latitude: (privacyMode ? AGOO : trip.origin).latitude,
@@ -932,6 +933,10 @@ function RideScreen({ trip, complete, satellite, tilt, privacyMode }: { trip: Tr
           const next = { latitude: coords.latitude, longitude: coords.longitude };
           const step = distanceMetres(previousPoint.current, next);
           if ((coords.accuracy ?? 999) <= 50 && step >= 1 && step <= 100) setTrackedMetres(total => total + step);
+          const gpsSpeedKph = Math.max(0, (coords.speed ?? 0) * 3.6);
+          if ((coords.accuracy ?? 999) <= 50 && gpsSpeedKph >= 3 && gpsSpeedKph <= 60) {
+            setMovingSpeedKph(previous => previous * .7 + gpsSpeedKph * .3);
+          }
           previousPoint.current = next;
           setCurrent(next);
           const displayPoint = privacyMode ? AGOO : next;
@@ -948,7 +953,7 @@ function RideScreen({ trip, complete, satellite, tilt, privacyMode }: { trip: Tr
   const remainingMetres = routeRemainingMetres(trip.route, current);
   const arrived = directToDestination <= 30;
   const progress = Math.min(1, Math.max(0, 1 - remainingMetres / Math.max(1, trip.routeDistanceKm * 1000)));
-  const remainingMinutes = Math.max(1, Math.ceil(trip.etaMinutes * (1 - progress)));
+  const remainingMinutes = Math.max(1, Math.ceil((remainingMetres / 1000) / Math.max(8, movingSpeedKph) * 60));
   const finish = () => {
     const drivenKm = Math.max(0, trackedMetres / 1000);
     complete({
