@@ -103,11 +103,11 @@ export const TOURIST_SPOTS: TouristSpot[] = [
     query: 'Our Lady of Lourdes Grotto, Agoo, La Union',
   },
   {
-    name: 'Agoo Eco-Fun World',
-    category: 'Nature · Eco-tourism',
-    description: 'Lakeside nature trails, picnic areas, boating, and coastal scenery.',
-    distance: '5.7 km from Municipal Hall',
-    latitude: 16.3487, longitude: 120.3480,
-    query: 'Agoo Eco-Fun World, Agoo, La Union',
+    name: 'Agoo Eco Park',
+    category: 'Nature · Agoho grove',
+    description: 'A coastal nature park known for its tall agoho trees, picnic grounds, and paths near the beach.',
+    distance: '5.5 km from Municipal Hall',
+    latitude: 16.35216, longitude: 120.33817,
+    query: 'Agoo Eco Park, Santa Rita, Agoo, La Union',
   },
 ];

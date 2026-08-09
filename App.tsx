@@ -74,7 +74,6 @@ const TOURIST_FARE_DESTINATIONS: FareEntry[] = [
   { barangay: 'Museo de Iloko', distance: '0.2', regular: 20, special: 16 },
   { barangay: 'Eagle of the North Park', distance: '0.9', regular: 20, special: 16 },
   { barangay: 'Our Lady of Lourdes Grotto', distance: '1.1', regular: 20, special: 16 },
-  { barangay: 'Agoo Eco-Fun World', distance: '5.5', regular: 23, special: 18 },
   { barangay: 'Agoo Eco Park (Sta. Rita)', distance: '5.5', regular: 23, special: 18 },
   { barangay: 'Agoo Plaza', distance: '0.3', regular: 20, special: 16 },
   { barangay: 'Agoo Municipal Hall', distance: '0.2', regular: 20, special: 16 },
@@ -85,10 +84,10 @@ const VERIFIED_PLACE_PHOTOS: Record<string, number> = {
   'Basilica Minore': require('./assets/places/basilica.jpg'),
   'Museo de Iloko': require('./assets/places/museo.jpg'),
   'Eagle of the North': require('./assets/places/eagle.jpg'),
-  'Agoo Eco-Fun World': require('./assets/places/eco.jpg'),
+  'Agoo Eco Park': require('./assets/places/eco.jpg'),
 };
 const EXPLORE_PLACES = TOURIST_SPOTS.filter(spot => VERIFIED_PLACE_PHOTOS[spot.name]);
-const HOME_MAP_SPOTS = TOURIST_SPOTS.filter(spot => spot.name !== 'Agoo Eco-Fun World');
+const HOME_MAP_SPOTS = TOURIST_SPOTS.filter(spot => spot.name !== 'Agoo Eco Park');
 function exactTouristPoint(destinationName: string): RoutePoint | null {
   const normalized = destinationName.toLowerCase();
   const spot = TOURIST_SPOTS.find(item => {
@@ -97,7 +96,7 @@ function exactTouristPoint(destinationName: string): RoutePoint | null {
       || (name.includes('basilica') && normalized.includes('basilica'))
       || (name.includes('eagle') && normalized.includes('eagle'))
       || (name.includes('lourdes') && normalized.includes('lourdes'))
-      || (name.includes('eco-fun') && normalized.includes('eco-fun'));
+      || (name.includes('eco park') && (normalized.includes('eco park') || normalized.includes('eco-fun')));
   });
   return spot ? { latitude: spot.latitude, longitude: spot.longitude } : null;
 }
