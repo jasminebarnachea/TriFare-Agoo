@@ -107,7 +107,7 @@ export const TOURIST_SPOTS: TouristSpot[] = [
     category: 'Nature · Eco-tourism',
     description: 'Lakeside nature trails, picnic areas, boating, and coastal scenery.',
     distance: '5.7 km from Municipal Hall',
-    latitude: 16.3274, longitude: 120.3336,
+    latitude: 16.3487, longitude: 120.3480,
     query: 'Agoo Eco-Fun World, Agoo, La Union',
   },
 ];

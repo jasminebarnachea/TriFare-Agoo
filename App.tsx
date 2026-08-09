@@ -85,6 +85,7 @@ const VERIFIED_PLACE_PHOTOS: Record<string, number> = {
   'Basilica Minore': require('./assets/places/basilica.jpg'),
   'Museo de Iloko': require('./assets/places/museo.jpg'),
   'Eagle of the North': require('./assets/places/eagle.jpg'),
+  'Agoo Eco-Fun World': require('./assets/places/eco.jpg'),
 };
 const EXPLORE_PLACES = TOURIST_SPOTS.filter(spot => VERIFIED_PLACE_PHOTOS[spot.name]);
 const HOME_MAP_SPOTS = TOURIST_SPOTS.filter(spot => spot.name !== 'Agoo Eco-Fun World');
@@ -535,7 +536,7 @@ function AppMap({ markers = true, route = false, routePoints, pinnedPoint, displ
   );
 }
 
-function ExploreDestinationCard({ spot, selected, distanceKm, onPress, onGo, showGo = true }: { spot: TouristSpot; selected: boolean; distanceKm: number | null; onPress: () => void; onGo: () => void; showGo?: boolean }) {
+function ExploreDestinationCard({ spot, selected, distanceKm, etaMinutes, onPress, onGo, showGo = true }: { spot: TouristSpot; selected: boolean; distanceKm: number | null; etaMinutes?: number; onPress: () => void; onGo: () => void; showGo?: boolean }) {
   const interaction = useRef(new Animated.Value(0)).current;
   const animate = (toValue: number) => Animated.spring(interaction, {
     toValue,
@@ -555,7 +556,7 @@ function ExploreDestinationCard({ spot, selected, distanceKm, onPress, onGo, sho
       {showGo && <Pressable accessibilityLabel={`Go to ${spot.name}`} style={s.destinationCardGo} onPress={(event) => { event.stopPropagation(); onGo(); }}><Navigation size={18} color={C.white} fill={C.white} /></Pressable>}
       <View style={s.destinationCardContent}>
         <Text numberOfLines={2} style={s.destinationCardTitle}>{spot.name}</Text>
-        <Text style={s.destinationCardStats}>{distanceKm == null ? 'Locating…' : `${distanceKm.toFixed(1)} km from you`}</Text>
+        <Text style={s.destinationCardStats}>{distanceKm == null ? 'Calculating route…' : `${distanceKm.toFixed(1)} km${etaMinutes ? ` · ${etaMinutes} min` : ''} from you`}</Text>
       </View>
     </Pressable>
   </Animated.View>;
@@ -568,6 +569,7 @@ function HomeScreen({ open, chooseSpot, satellite, setSatellite, tilt, setTilt, 
   const [origin, setOrigin] = useState<RoutePoint>({ latitude: AGOO.latitude, longitude: AGOO.longitude });
   const [locationReady, setLocationReady] = useState(false);
   const [homeRoute, setHomeRoute] = useState<RoutePoint[]>([]);
+  const [spotRouteMetrics, setSpotRouteMetrics] = useState<Record<string, { distanceKm: number; etaMinutes: number }>>({});
   const [spotDetails, setSpotDetails] = useState<Record<string, AgooPlace>>({});
   const homeSheetY = useRef(new Animated.Value(0)).current;
   const homeSheetOffset = useRef(0);
@@ -593,9 +595,17 @@ function HomeScreen({ open, chooseSpot, satellite, setSatellite, tilt, setTilt, 
       const permission = await Location.requestForegroundPermissionsAsync();
       if (permission.status !== 'granted') { setCurrentLabel('Location permission needed'); return; }
       const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
-      setOrigin({ latitude: position.coords.latitude, longitude: position.coords.longitude });
+      const current = { latitude: position.coords.latitude, longitude: position.coords.longitude };
+      setOrigin(current);
       setLocationReady(true);
       setCurrentLabel('Agoo, La Union');
+      const metrics = await Promise.all(EXPLORE_PLACES.map(async spot => {
+        try {
+          const route = await computeRoute(current, { latitude: spot.latitude, longitude: spot.longitude });
+          return route ? [spot.name, { distanceKm: route.distanceKm, etaMinutes: route.durationMinutes }] as const : null;
+        } catch { return null; }
+      }));
+      setSpotRouteMetrics(Object.fromEntries(metrics.filter((item): item is NonNullable<typeof item> => item !== null)));
     })().catch(() => setCurrentLabel('Agoo, La Union'));
   }, []);
   const animateHomeRoute = async (destination: RoutePoint | string) => {
@@ -634,13 +644,13 @@ function HomeScreen({ open, chooseSpot, satellite, setSatellite, tilt, setTilt, 
       <Animated.View {...homeSheetPan.panHandlers} style={[s.homeExploreSheet, focusedExploreCard && s.homeExploreSheetFocused, { transform: [{ translateY: homeSheetY }] }]}>
         <Pressable hitSlop={8} style={s.dragHandleArea} onPress={() => settleHomeSheet(homeSheetOffset.current === 0)}><View style={s.handle} /></Pressable>
         {focusedExploreCard ? <View style={s.focusedExploreRow}>
-          <ExploreDestinationCard spot={selectedSpot} selected showGo={false} distanceKm={locationReady ? distanceMetres(origin, selectedSpot) / 1000 : null} onPress={() => setFocusedExploreCard(false)} onGo={() => chooseSpot(selectedSpot)} />
+          <ExploreDestinationCard spot={selectedSpot} selected showGo={false} distanceKm={spotRouteMetrics[selectedSpot.name]?.distanceKm ?? (locationReady ? distanceMetres(origin, selectedSpot) / 1000 : null)} etaMinutes={spotRouteMetrics[selectedSpot.name]?.etaMinutes} onPress={() => setFocusedExploreCard(false)} onGo={() => chooseSpot(selectedSpot)} />
           <View style={s.focusedExploreDetails}><Pressable accessibilityLabel="Back to all Explore places" onPress={() => setFocusedExploreCard(false)} style={s.focusedExploreBack}><ArrowLeft size={17} color={darkModeActive ? C.white : C.ink} /><Text style={s.focusedExploreBackText}>All places</Text></Pressable><Text style={s.placeCategory}>{selectedSpot.category}</Text><Text style={s.focusedExploreTitle}>{selectedSpot.name}</Text><Text numberOfLines={4} style={s.focusedExploreDescription}>{selectedSpot.description}</Text></View>
         </View> : <FlatList horizontal data={EXPLORE_PLACES} keyExtractor={item => item.name} showsHorizontalScrollIndicator={false}
           snapToInterval={152} decelerationRate="fast"
           contentContainerStyle={{ gap: 12, paddingTop: 4, paddingRight: 4, paddingBottom: 14 }}
           renderItem={({ item }) => <ExploreDestinationCard spot={item} selected={selectedSpot.name === item.name}
-            distanceKm={locationReady ? distanceMetres(origin, item) / 1000 : null} onPress={() => selectHomeSpot(item, true)} onGo={() => chooseSpot(item)} />} />}
+            distanceKm={spotRouteMetrics[item.name]?.distanceKm ?? (locationReady ? distanceMetres(origin, item) / 1000 : null)} etaMinutes={spotRouteMetrics[item.name]?.etaMinutes} onPress={() => selectHomeSpot(item, true)} onGo={() => chooseSpot(item)} />} />}
         {focusedExploreCard && <Pressable style={s.exploreGoButton} onPress={() => chooseSpot(selectedSpot)}>
           <Navigation color={C.white} size={18} fill={C.white} />
           <Text style={s.buttonWhite}>Go to {selectedSpot.name}</Text>
