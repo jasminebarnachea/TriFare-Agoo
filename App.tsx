@@ -16,6 +16,7 @@ import {
   Switch,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
@@ -391,6 +392,8 @@ function TriFareApp() {
 
 function OnboardingScreen({ onContinue }: { onContinue: () => void }) {
   const ride = useRef(new Animated.Value(0)).current;
+  const { height, width } = useWindowDimensions();
+  const compact = height < 720;
   useEffect(() => {
     const animation = Animated.loop(Animated.sequence([
       Animated.timing(ride, { toValue: 1, duration: 2600, useNativeDriver: true }),
@@ -401,16 +404,16 @@ function OnboardingScreen({ onContinue }: { onContinue: () => void }) {
   }, []);
   return <LinearGradient colors={['#073D2A', '#087C4D', '#0B9A5E']} style={s.onboardingPage}>
     <StatusBar style="light" />
-    <SafeAreaView style={s.onboardingSafe} edges={['top', 'bottom']}>
+    <SafeAreaView style={[s.onboardingSafe, compact && s.onboardingSafeCompact]} edges={['top', 'bottom']}>
       <View style={s.onboardingBrand}><View style={s.onboardingBrandIcon}><TricycleIcon size={27} color={C.green} /></View><Text style={s.onboardingBrandText}>TRI FARE AGOO</Text></View>
-      <View style={s.onboardingHero}>
+      <View style={[s.onboardingHero, compact && s.onboardingHeroCompact]}>
         <View style={s.onboardingGlow} />
         <Text style={s.onboardingKicker}>FAIR FARES. EASY ROUTES.</Text>
-        <Text style={s.onboardingTitle}>Ride around Agoo with confidence.</Text>
+        <Text style={[s.onboardingTitle, compact && s.onboardingTitleCompact]}>Ride around Agoo with confidence.</Text>
         <Text style={s.onboardingSubtitle}>Check official tricycle fares, follow routes, and discover places near you.</Text>
-        <View style={s.onboardingRoad}>
+        <View style={[s.onboardingRoad, compact && s.onboardingRoadCompact]}>
           <View style={s.onboardingRoadLine} />
-          <Animated.View style={[s.onboardingTricycle, { transform: [{ translateX: ride.interpolate({ inputRange: [0, 1], outputRange: [-34, 250] }) }] }]}>
+          <Animated.View style={[s.onboardingTricycle, { transform: [{ translateX: ride.interpolate({ inputRange: [0, 1], outputRange: [-34, Math.max(190, width - 118)] }) }] }]}>
             <TricycleIcon size={54} color={C.white} />
           </Animated.View>
         </View>
@@ -1227,15 +1230,19 @@ const baseStyles = StyleSheet.create({
   app: { flex: 1, backgroundColor: C.pale }, flex: { flex: 1 }, grow: { flex: 1 }, row: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   onboardingPage: { flex: 1 },
   onboardingSafe: { flex: 1, paddingHorizontal: 25, paddingTop: 12, paddingBottom: 24, justifyContent: 'space-between' },
+  onboardingSafeCompact: { paddingTop: 5, paddingBottom: 12 },
   onboardingBrand: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   onboardingBrandIcon: { width: 47, height: 47, borderRadius: 16, backgroundColor: C.white, alignItems: 'center', justifyContent: 'center' },
   onboardingBrandText: { fontFamily: 'Manrope_800ExtraBold', color: C.white, fontSize: 12, letterSpacing: 1.5 },
   onboardingHero: { minHeight: 430, justifyContent: 'center' },
+  onboardingHeroCompact: { minHeight: 350 },
   onboardingGlow: { position: 'absolute', width: 330, height: 330, borderRadius: 165, backgroundColor: 'rgba(255,255,255,.08)', right: -120, top: -50 },
   onboardingKicker: { fontFamily: 'Manrope_800ExtraBold', color: '#9DE6BF', fontSize: 10, letterSpacing: 1.8 },
   onboardingTitle: { fontFamily: 'Manrope_800ExtraBold', color: C.white, fontSize: 41, lineHeight: 48, marginTop: 12, maxWidth: 330 },
+  onboardingTitleCompact: { fontSize: 34, lineHeight: 39, marginTop: 8 },
   onboardingSubtitle: { fontFamily: 'Manrope_500Medium', color: '#D1E9DC', fontSize: 14, lineHeight: 22, marginTop: 15, maxWidth: 325 },
   onboardingRoad: { height: 104, borderRadius: 30, backgroundColor: 'rgba(3,37,24,.45)', marginTop: 35, justifyContent: 'center', overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,.13)' },
+  onboardingRoadCompact: { height: 82, marginTop: 18, borderRadius: 24 },
   onboardingRoadLine: { position: 'absolute', left: 20, right: 20, height: 2, backgroundColor: 'rgba(255,255,255,.3)' },
   onboardingTricycle: { width: 64, height: 64, borderRadius: 22, backgroundColor: C.green, borderWidth: 2, borderColor: 'rgba(255,255,255,.8)', alignItems: 'center', justifyContent: 'center' },
   onboardingButton: { height: 62, borderRadius: 21, backgroundColor: C.white, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10 },
