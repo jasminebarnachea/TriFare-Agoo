@@ -27,7 +27,7 @@ import MapView, { AnimatedRegion, Circle as MapCircle, Marker, Polyline, PROVIDE
 import Svg, { Circle, Path } from 'react-native-svg';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { HugeiconsIcon } from '@hugeicons/react-native';
-import { UserIcon } from '@hugeicons/core-free-icons';
+import { UserFullViewIcon } from '@hugeicons/core-free-icons';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import {
   ArrowLeft, ArrowRight, Calculator, Camera, Check, ChevronRight, Clock3,
@@ -285,7 +285,7 @@ function NavigationArrow({ heading: _heading }: { heading: number }) {
       transform: [{ scale: pulse.interpolate({ inputRange: [0, 1], outputRange: [.7, 1.55] }) }],
     }]} />
     <View style={s.navigationArrow}>
-      <HugeiconsIcon icon={UserIcon} size={27} color="white" strokeWidth={2.4} />
+      <HugeiconsIcon icon={UserFullViewIcon} size={28} color="white" strokeWidth={2.4} />
     </View>
   </View>;
 }
