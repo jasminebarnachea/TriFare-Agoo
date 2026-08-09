@@ -24,7 +24,6 @@ import * as ImagePicker from 'expo-image-picker';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import MapView, { AnimatedRegion, Circle as MapCircle, Marker, Polyline, PROVIDER_GOOGLE, Region } from 'react-native-maps';
-import Svg, { Circle, Path } from 'react-native-svg';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { HugeiconsIcon } from '@hugeicons/react-native';
 import { UserFullViewIcon } from '@hugeicons/core-free-icons';
@@ -228,6 +227,7 @@ function tiltMapCamera(map: MapView | null, pitch = 50, delay = 700) {
   }, delay);
 }
 const AGOO_MESSENGER = 'https://m.me/MunicipalityofAgooLaUnion';
+const DEVELOPER_PORTFOLIO = 'https://jasminebarnachea.vercel.app';
 function reportToAgoo(issue: string, ride: string, details = '') {
   const message = `Tri Fare Agoo report\nIssue: ${issue}\nRide: ${ride}${details ? `\nDetails: ${details}` : ''}`;
   Linking.openURL(`${AGOO_MESSENGER}?text=${encodeURIComponent(message)}`)
@@ -246,13 +246,8 @@ function showAgooEmergencyHotlines() {
   );
 }
 
-function TricycleIcon({ size = 24, color = C.green }: { size?: number; color?: string }) {
-  return <Svg width={size} height={size} viewBox="0 0 32 32" fill="none">
-    <Circle cx="8" cy="24" r="4" stroke={color} strokeWidth="2.2" />
-    <Circle cx="24.5" cy="24" r="4" stroke={color} strokeWidth="2.2" />
-    <Path d="M8 24h8.5l-3.2-9.2H9.8m3.5 0h7.2l4 9.2M11 11.5h7.6l3.7 4.2h-9M18.6 11.5V8.8h4.2"
-      stroke={color} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-  </Svg>;
+function TricycleIcon({ size = 24 }: { size?: number; color?: string }) {
+  return <Image source={require('./assets/icons/filipino-tricycle.png')} style={{ width: size, height: size * .8, resizeMode: 'contain' }} />;
 }
 
 function PulsingDestinationMarker() {
@@ -290,6 +285,12 @@ function NavigationArrow({ heading: _heading }: { heading: number }) {
   </View>;
 }
 
+function CurrentLocationMarker() {
+  return <View style={s.currentLocationMarker}>
+    <HugeiconsIcon icon={UserFullViewIcon} size={25} color={C.white} strokeWidth={2.4} />
+  </View>;
+}
+
 export default function App() {
   const [fonts] = useFonts({ Manrope_400Regular, Manrope_500Medium, Manrope_600SemiBold, Manrope_700Bold, Manrope_800ExtraBold });
   if (!fonts) return <View style={{ flex: 1, backgroundColor: C.pale }} />;
@@ -298,6 +299,7 @@ export default function App() {
 
 function TriFareApp() {
   const [profile, setProfile] = useState<UserProfile | null | undefined>(undefined);
+  const [showOnboarding, setShowOnboarding] = useState(true);
   const [screen, setScreen] = useState<Screen>('home');
   const [previous, setPrevious] = useState<Screen>('home');
   const [activeTrip, setActiveTrip] = useState<TripPlan | null>(null);
@@ -317,7 +319,9 @@ function TriFareApp() {
   };
   useEffect(() => {
     Promise.all([AsyncStorage.getItem(PROFILE_KEY), AsyncStorage.getItem(SESSION_KEY)])
-      .then(([value, session]) => setProfile(value && session === 'true' ? JSON.parse(value) : null))
+      .then(([value, session]) => {
+        setProfile(value && session === 'true' ? JSON.parse(value) : null);
+      })
       .catch(() => setProfile(null));
     AsyncStorage.getItem(HISTORY_KEY).then(value => value && setHistory(JSON.parse(value))).catch(() => {});
     AsyncStorage.getItem(ACTIVE_TRIP_KEY).then(value => {
@@ -357,6 +361,7 @@ function TriFareApp() {
   const goBack = () => setScreen(previous === screen ? 'home' : previous);
   const showNav = ['home', 'fare', 'history', 'profile'].includes(screen);
   const tab = (['home', 'fare', 'history', 'profile'].includes(screen) ? screen : 'home') as Tab;
+  if (showOnboarding) return <OnboardingScreen onContinue={() => setShowOnboarding(false)} />;
   if (profile === undefined) return <View style={[s.flex, { backgroundColor: '#101510' }]} />;
   if (!profile) return <AuthScreen onAuthenticated={setProfile} />;
 
@@ -382,6 +387,42 @@ function TriFareApp() {
       {showNav && <BottomNav active={tab} set={(next) => setScreen(next)} profile={profile} theme={theme} />}
     </View>
   );
+}
+
+function OnboardingScreen({ onContinue }: { onContinue: () => void }) {
+  const ride = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const animation = Animated.loop(Animated.sequence([
+      Animated.timing(ride, { toValue: 1, duration: 2600, useNativeDriver: true }),
+      Animated.timing(ride, { toValue: 0, duration: 0, useNativeDriver: true }),
+    ]));
+    animation.start();
+    return () => animation.stop();
+  }, []);
+  return <LinearGradient colors={['#073D2A', '#087C4D', '#0B9A5E']} style={s.onboardingPage}>
+    <StatusBar style="light" />
+    <SafeAreaView style={s.onboardingSafe} edges={['top', 'bottom']}>
+      <View style={s.onboardingBrand}><View style={s.onboardingBrandIcon}><TricycleIcon size={27} color={C.green} /></View><Text style={s.onboardingBrandText}>TRI FARE AGOO</Text></View>
+      <View style={s.onboardingHero}>
+        <View style={s.onboardingGlow} />
+        <Text style={s.onboardingKicker}>FAIR FARES. EASY ROUTES.</Text>
+        <Text style={s.onboardingTitle}>Ride around Agoo with confidence.</Text>
+        <Text style={s.onboardingSubtitle}>Check official tricycle fares, follow routes, and discover places near you.</Text>
+        <View style={s.onboardingRoad}>
+          <View style={s.onboardingRoadLine} />
+          <Animated.View style={[s.onboardingTricycle, { transform: [{ translateX: ride.interpolate({ inputRange: [0, 1], outputRange: [-34, 250] }) }] }]}>
+            <TricycleIcon size={54} color={C.white} />
+          </Animated.View>
+        </View>
+      </View>
+      <View style={s.onboardingFooter}>
+        <Pressable accessibilityRole="button" style={s.onboardingButton} onPress={onContinue}>
+          <Text style={s.onboardingButtonText}>Go Now</Text><ArrowRight size={20} color={C.green} />
+        </Pressable>
+        <Pressable accessibilityRole="link" onPress={() => Linking.openURL(DEVELOPER_PORTFOLIO)}><Text style={s.onboardingDeveloper}>Developer: <Text style={s.onboardingDeveloperName}>Jasmine Barnachea</Text></Text></Pressable>
+      </View>
+    </SafeAreaView>
+  </LinearGradient>;
 }
 
 function AuthScreen({ onAuthenticated }: { onAuthenticated: (profile: UserProfile) => void }) {
@@ -431,9 +472,9 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (profile: UserProfil
       <View><Text style={s.authKicker}>TRI FARE AGOO</Text><Text style={s.authTitle}>{mode === 'signup' ? 'Welcome aboard.' : 'Welcome back.'}</Text>
         <Text style={s.authSubtitle}>Fair routes, official fares, and safer trips around Agoo.</Text></View>
       <View style={s.authCard}>
-        <Pressable style={s.authPhoto} onPress={pickPhoto}>
+        {mode === 'signup' && <Pressable style={s.authPhoto} onPress={pickPhoto}>
           {photoUri ? <Image source={{ uri: photoUri }} style={s.authPhotoImage} /> : <><Camera color="#8FE2B5" size={27} /><Text style={s.authPhotoText}>Add photo</Text></>}
-        </Pressable>
+        </Pressable>}
         {mode === 'signup' && <TextInput value={name} onChangeText={setName} placeholder="Your name" placeholderTextColor="#758078" style={s.authInput} />}
         <TextInput value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" autoComplete="email" placeholder="Email address" placeholderTextColor="#758078" style={s.authInput} />
         {mode === 'signup' && <View style={s.authRoleRow}>
@@ -459,20 +500,25 @@ function AppMap({ markers = true, route = false, routePoints, pinnedPoint, displ
   const map = useRef<MapView>(null);
   const [region, setRegion] = useState(AGOO);
   const [permission, setPermission] = useState(false);
+  const [currentLocation, setCurrentLocation] = useState<RoutePoint | null>(null);
   const [previewRoute, setPreviewRoute] = useState<RoutePoint[]>([]);
   useEffect(() => {
-    if (!follow) return;
     let watcher: Location.LocationSubscription | undefined;
     (async () => {
       const result = await Location.requestForegroundPermissionsAsync();
       if (result.status !== 'granted') return;
       setPermission(true);
       const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      setCurrentLocation({ latitude: pos.coords.latitude, longitude: pos.coords.longitude });
       const next = { ...region, latitude: pos.coords.latitude, longitude: pos.coords.longitude };
-      setRegion(next); map.current?.animateToRegion(next, 650);
+      if (follow) { setRegion(next); map.current?.animateToRegion(next, 650); }
       watcher = await Location.watchPositionAsync(
         { accuracy: Location.Accuracy.Balanced, distanceInterval: 10 },
-        ({ coords }) => map.current?.animateCamera({ center: { latitude: coords.latitude, longitude: coords.longitude } }, { duration: 500 })
+        ({ coords }) => {
+          const point = { latitude: coords.latitude, longitude: coords.longitude };
+          setCurrentLocation(point);
+          if (follow) map.current?.animateCamera({ center: point }, { duration: 500 });
+        }
       );
     })();
     return () => watcher?.remove();
@@ -501,7 +547,7 @@ function AppMap({ markers = true, route = false, routePoints, pinnedPoint, displ
       style={StyleSheet.absoluteFill}
       provider={Platform.OS === 'android' ? PROVIDER_GOOGLE : undefined}
       initialRegion={region}
-      showsUserLocation={permission && !routePoints?.length}
+      showsUserLocation={false}
       showsMyLocationButton={false}
       pitchEnabled rotateEnabled
       mapType={satellite ? 'hybrid' : 'standard'}
@@ -523,11 +569,12 @@ function AppMap({ markers = true, route = false, routePoints, pinnedPoint, displ
       </Marker>}
       {pinnedPoint && <Marker coordinate={pinnedPoint} title="Pinned destination"><View style={s.pinnedMapIcon}><MapPin color="white" size={22} fill="white" /></View></Marker>}
       {displayLocation && !routePoints?.length && <Marker coordinate={displayLocation} title="Approximate location"><View style={s.privateLocationMarker}><View style={s.privateLocationDot} /></View></Marker>}
+      {permission && currentLocation && !displayLocation && !routePoints?.length ? <Marker coordinate={currentLocation} anchor={{ x: .5, y: .5 }} flat zIndex={20}><CurrentLocationMarker /></Marker> : null}
       {previewRoute.length > 1 && <>
         <Polyline coordinates={previewRoute} strokeColor="rgba(20,35,45,.72)" strokeWidth={10} />
         <Polyline coordinates={previewRoute} strokeColor="#39A9E8" strokeWidth={6} lineCap="round" lineJoin="round" />
         <Marker coordinate={previewRoute[0]} anchor={{ x: .5, y: .5 }} flat zIndex={20}>
-          <NavigationArrow heading={routeHeading(previewRoute[0], previewRoute[1])} />
+          <CurrentLocationMarker />
         </Marker>
       </>}
       {route && <Polyline coordinates={routeLine} strokeColor={C.green} strokeWidth={6} />}
@@ -792,7 +839,7 @@ function RouteScreen({ goBack, start, initialDestination, satellite, tilt, priva
   return (
     <View style={[s.flex, { backgroundColor: '#111411' }]}>
       <MapView ref={map} style={StyleSheet.absoluteFill} provider={Platform.OS === 'android' ? PROVIDER_GOOGLE : undefined}
-        mapType={satellite ? 'hybrid' : 'standard'} showsTraffic showsBuildings showsUserLocation={!privacyMode} showsCompass={false}
+        mapType={satellite ? 'hybrid' : 'standard'} showsTraffic showsBuildings showsUserLocation={false} showsCompass={false}
         userInterfaceStyle={darkModeActive ? 'dark' : 'light'} customMapStyle={darkModeActive ? DARK_MAP_STYLE : []}
         pitchEnabled rotateEnabled
         onPress={({ nativeEvent }) => { if (pinMode) loadPointRoute(nativeEvent.coordinate, 'Pinned destination'); }}
@@ -802,7 +849,7 @@ function RouteScreen({ goBack, start, initialDestination, satellite, tilt, priva
           <Polyline coordinates={[privacyMode ? AGOO : origin, ...animatedRoute]} strokeColor="#39A9E8" strokeWidth={6} lineCap="round" lineJoin="round" />
         </> : null}
         <Marker coordinate={privacyMode ? AGOO : origin} anchor={{ x: .5, y: .5 }} zIndex={20}>
-          <NavigationArrow heading={result?.points.length && result.points.length > 1 ? routeHeading(result.points[0], result.points[1]) : 0} />
+          <CurrentLocationMarker />
         </Marker>
         {result?.points.length ? <Marker coordinate={result.points[result.points.length - 1]} title={destinationName}><PulsingDestinationMarker /></Marker> : null}
       </MapView>
@@ -1143,7 +1190,7 @@ function ProfileScreen({ open, profile, logout, theme, setTheme }: { open: (s: S
     <Card style={s.appearanceCard}><View style={s.row}><View style={s.appearanceIcon}>{theme === 'dark' ? <Moon color="#7EDCAA" size={22} /> : <Sun color="#E5A51D" size={22} />}</View><View style={s.grow}><Text style={s.cardTitle}>Appearance</Text><Text style={s.caption}>{theme === 'dark' ? 'Dark mode' : 'Light mode'}</Text></View><Switch value={theme === 'dark'} onValueChange={enabled => setTheme(enabled ? 'dark' : 'light')} trackColor={{ false: '#CBD5CE', true: C.green }} /></View></Card>
     <Card><MenuRow icon={<SlidersHorizontal color={C.green} />} title="Fare Matrix" onPress={() => open('matrix')} /><MenuRow icon={<MessageSquareWarning color={C.red} />} title="Report / Feedback" onPress={() => open('report')} /><MenuRow icon={<ShieldCheck color={C.blue} />} title="Agoo emergency hotlines" onPress={showAgooEmergencyHotlines} /></Card>
     <Pressable style={s.logoutButton} onPress={logout}><Text style={s.logoutText}>Log out</Text></Pressable>
-    <View style={s.about}><TricycleIcon size={36} /><Text style={s.brand}>Tri Fare Agoo</Text><Text style={s.caption}>Fair rides. Clear fares. Safer journeys.</Text><Text style={s.version}>Version 1.0.0</Text></View>
+    <View style={s.about}><TricycleIcon size={36} /><Text style={s.brand}>Tri Fare Agoo</Text><Text style={s.caption}>Fair rides. Clear fares. Safer journeys.</Text><Pressable accessibilityRole="link" onPress={() => Linking.openURL(DEVELOPER_PORTFOLIO)}><Text style={s.developerCredit}>Developer: <Text style={s.developerName}>Jasmine Barnachea</Text></Text></Pressable><Text style={s.version}>Version 1.0.0</Text></View>
   </Page>;
 }
 
@@ -1178,6 +1225,24 @@ function Segment({ text, active, onPress }: { text: string; active?: boolean; on
 function MenuRow({ icon, title, onPress }: { icon: React.ReactNode; title: string; onPress?: () => void }) { return <Pressable style={s.menuRow} onPress={onPress}>{icon}<Text style={[s.cardTitle, s.grow]}>{title}</Text><ChevronRight color={C.muted} size={20} /></Pressable>; }
 const baseStyles = StyleSheet.create({
   app: { flex: 1, backgroundColor: C.pale }, flex: { flex: 1 }, grow: { flex: 1 }, row: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  onboardingPage: { flex: 1 },
+  onboardingSafe: { flex: 1, paddingHorizontal: 25, paddingTop: 12, paddingBottom: 24, justifyContent: 'space-between' },
+  onboardingBrand: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  onboardingBrandIcon: { width: 47, height: 47, borderRadius: 16, backgroundColor: C.white, alignItems: 'center', justifyContent: 'center' },
+  onboardingBrandText: { fontFamily: 'Manrope_800ExtraBold', color: C.white, fontSize: 12, letterSpacing: 1.5 },
+  onboardingHero: { minHeight: 430, justifyContent: 'center' },
+  onboardingGlow: { position: 'absolute', width: 330, height: 330, borderRadius: 165, backgroundColor: 'rgba(255,255,255,.08)', right: -120, top: -50 },
+  onboardingKicker: { fontFamily: 'Manrope_800ExtraBold', color: '#9DE6BF', fontSize: 10, letterSpacing: 1.8 },
+  onboardingTitle: { fontFamily: 'Manrope_800ExtraBold', color: C.white, fontSize: 41, lineHeight: 48, marginTop: 12, maxWidth: 330 },
+  onboardingSubtitle: { fontFamily: 'Manrope_500Medium', color: '#D1E9DC', fontSize: 14, lineHeight: 22, marginTop: 15, maxWidth: 325 },
+  onboardingRoad: { height: 104, borderRadius: 30, backgroundColor: 'rgba(3,37,24,.45)', marginTop: 35, justifyContent: 'center', overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,.13)' },
+  onboardingRoadLine: { position: 'absolute', left: 20, right: 20, height: 2, backgroundColor: 'rgba(255,255,255,.3)' },
+  onboardingTricycle: { width: 64, height: 64, borderRadius: 22, backgroundColor: C.green, borderWidth: 2, borderColor: 'rgba(255,255,255,.8)', alignItems: 'center', justifyContent: 'center' },
+  onboardingButton: { height: 62, borderRadius: 21, backgroundColor: C.white, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10 },
+  onboardingButtonText: { fontFamily: 'Manrope_800ExtraBold', color: C.green, fontSize: 15 },
+  onboardingFooter: { gap: 14 },
+  onboardingDeveloper: { fontFamily: 'Manrope_500Medium', color: '#CBE6D7', fontSize: 10, textAlign: 'center' },
+  onboardingDeveloperName: { fontFamily: 'Manrope_800ExtraBold', color: C.white, textDecorationLine: 'underline' },
   authPage: { flex: 1, backgroundColor: '#0D1711', overflow: 'hidden' },
   authGlow: { position: 'absolute', width: 380, height: 380, borderRadius: 190, backgroundColor: '#0B7549', opacity: .28, top: -170, right: -140 },
   authSafe: { flex: 1 },
@@ -1284,6 +1349,8 @@ const baseStyles = StyleSheet.create({
   navigationArrowWrap: { width: 68, height: 68, alignItems: 'center', justifyContent: 'center' },
   navigationArrowPulse: { position: 'absolute', width: 48, height: 48, borderRadius: 24, backgroundColor: '#5BBBEF' },
   navigationArrow: { width: 42, height: 42, borderRadius: 21, backgroundColor: '#39A9E8', borderWidth: 3, borderColor: C.white, alignItems: 'center', justifyContent: 'center', shadowColor: '#092C40', shadowOpacity: .45, shadowRadius: 7, shadowOffset: { width: 0, height: 4 } },
+  currentLocationMarker: { width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(57,169,232,.28)', borderWidth: 2, borderColor: C.white, alignItems: 'center', justifyContent: 'center', shadowColor: '#092C40', shadowOpacity: .4, shadowRadius: 7 },
+  currentLocationDot: { width: 17, height: 17, borderRadius: 9, backgroundColor: '#159BE5', borderWidth: 2, borderColor: C.white },
   pulseWrap: { width: 58, height: 58, alignItems: 'center', justifyContent: 'center' },
   pinPulse: { position: 'absolute', width: 42, height: 42, borderRadius: 21, backgroundColor: '#36A2FF' },
   wazePin: { width: 39, height: 39, borderRadius: 20, backgroundColor: C.blue, borderWidth: 3, borderColor: 'white', alignItems: 'center', justifyContent: 'center', shadowColor: '#36A2FF', shadowOpacity: .9, shadowRadius: 10 },
@@ -1388,10 +1455,10 @@ const baseStyles = StyleSheet.create({
   appearanceCard: { paddingVertical: 12 },
   appearanceIcon: { width: 43, height: 43, borderRadius: 14, backgroundColor: C.mint, alignItems: 'center', justifyContent: 'center' },
   profilePhoto: { width: 58, height: 58, borderRadius: 20, backgroundColor: C.mint },
-  logoutButton: { height: 50, borderRadius: 16, borderWidth: 1, borderColor: '#F0CACA', backgroundColor: '#FFF3F3', alignItems: 'center', justifyContent: 'center' },
-  logoutText: { fontFamily: 'Manrope_800ExtraBold', color: C.red, fontSize: 12 },
+  logoutButton: { height: 50, borderRadius: 16, borderWidth: 1, borderColor: '#D6E1DA', backgroundColor: '#EEF4F0', alignItems: 'center', justifyContent: 'center' },
+  logoutText: { fontFamily: 'Manrope_800ExtraBold', color: C.ink, fontSize: 12 },
   menuRow: { flexDirection: 'row', alignItems: 'center', gap: 14, minHeight: 54, borderBottomWidth: 1, borderColor: C.line },
-  about: { alignItems: 'center', padding: 30, gap: 4 }, brand: { fontFamily: 'Manrope_800ExtraBold', color: C.green, fontSize: 22 }, version: { fontFamily: 'Manrope_500Medium', color: '#A0AAA4', fontSize: 10, marginTop: 8 },
+  about: { alignItems: 'center', padding: 30, gap: 4 }, brand: { fontFamily: 'Manrope_800ExtraBold', color: C.green, fontSize: 22 }, developerCredit: { fontFamily: 'Manrope_500Medium', color: C.muted, fontSize: 10, marginTop: 8 }, developerName: { fontFamily: 'Manrope_800ExtraBold', color: C.green, textDecorationLine: 'underline' }, version: { fontFamily: 'Manrope_500Medium', color: '#A0AAA4', fontSize: 10, marginTop: 4 },
 });
 
 const lightThemeStyles: Partial<Record<keyof typeof baseStyles, any>> = StyleSheet.create({
@@ -1417,7 +1484,7 @@ const darkThemeStyles: Partial<Record<keyof typeof baseStyles, any>> = StyleShee
   headerTitle: { color: '#F4F7F5' }, cardTitle: { color: '#F1F5F2' }, bigValue: { color: '#F1F5F2' }, bold: { color: '#F1F5F2' },
   caption: { color: '#A5B0A8' }, eyebrow: { color: '#91A097' }, lineLabel: { color: '#A5B0A8' }, lineValue: { color: '#F1F5F2' },
   nav: { backgroundColor: 'rgba(15,20,16,.38)', borderColor: 'rgba(255,255,255,.2)' },
-  profile: { backgroundColor: '#0F1310' }, appearanceIcon: { backgroundColor: '#26362C' },
+  profile: { backgroundColor: '#0F1310' }, appearanceIcon: { backgroundColor: '#26362C' }, developerCredit: { color: '#A5B0A8' },
   input: { color: '#F1F5F2' }, inlineSearch: { backgroundColor: '#1C211D' }, textarea: { backgroundColor: '#1C211D', color: '#F1F5F2' },
   issueChip: { backgroundColor: '#1C211D' }, issueText: { color: '#F1F5F2' }, photoAction: { backgroundColor: '#182A20', borderColor: '#315440' },
   arrivalBanner: { backgroundColor: '#182A20' }, noProblemButton: { backgroundColor: '#182A20', borderColor: '#315440' },
@@ -1425,7 +1492,7 @@ const darkThemeStyles: Partial<Record<keyof typeof baseStyles, any>> = StyleShee
   tableName: { color: '#F1F5F2' }, tableCell: { color: '#A5B0A8' }, tablePrice: { color: '#F1F5F2' }, source: { backgroundColor: '#1C211D' },
   breakdown: { backgroundColor: '#182A20', borderColor: '#315440' }, estimate: { backgroundColor: '#182A20' }, rideCard: { backgroundColor: '#1C211D' },
   statsCard: { backgroundColor: 'rgba(28,33,29,.97)' }, statValue: { color: '#F1F5F2' }, rideSheet: { backgroundColor: '#151A16' }, liveShare: { backgroundColor: '#182A20' }, progressTrack: { backgroundColor: '#364039' },
-  specialRow: { backgroundColor: '#202722', borderWidth: 1, borderColor: '#38433B' }, pinLocationButton: { backgroundColor: 'rgba(29,35,30,.97)', borderWidth: 1, borderColor: '#465048' }, logoutButton: { backgroundColor: '#2B1B1C', borderColor: '#5A3032' }, menuRow: { borderColor: '#303832' },
+  specialRow: { backgroundColor: '#202722', borderWidth: 1, borderColor: '#38433B' }, pinLocationButton: { backgroundColor: 'rgba(29,35,30,.97)', borderWidth: 1, borderColor: '#465048' }, logoutButton: { backgroundColor: '#222923', borderColor: '#3C4740' }, logoutText: { color: '#F1F5F2' }, menuRow: { borderColor: '#303832' },
 });
 
 const s = new Proxy(baseStyles, {
